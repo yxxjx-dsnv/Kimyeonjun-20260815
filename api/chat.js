@@ -10,7 +10,7 @@
  *  - "대답해도 무시한다" → reply가 고객의 표현을 그대로 인용하며 근거를 설명
  *  - AI가 후보를 못 고르면 서버의 키워드 매칭이 대신 후보를 찾는다 (빈손 응답 금지)
  */
-import { CATALOG, byId, priceIntel } from './_intel.js'
+import { CATALOG, byId, priceIntel, HAS_NEW_COMPARE } from './_intel.js'
 
 const MODEL = 'gpt-4o-mini'
 const MAX_MESSAGES = 20
@@ -84,7 +84,8 @@ const SYSTEM_PROMPT = `너는 쇼핑 앱 '쇼포트'의 AI 쇼핑 에이전트�
    단, **고객이 브랜드를 말했다면 후보는 반드시 그 브랜드의 매물이어야 한다.** 다른 브랜드에 색·소재·디자인이 더 비슷한 상품이 있어도 절대 대신 제시하지 마라. 브랜드가 틀린 추천은 오답이다.
 3. reply 첫 문장은 고객이 말한 특징을 그대로 인용하며 시작해라. (예: "말씀하신 '베이지에 남색 무늬'는 디올 오블리크 패턴이에요.") 각 후보가 묘사의 어떤 부분과 맞는지, 어떤 부분은 판매글에 없어 확인이 필요한지 솔직히 말해라.
 4. 질문은 대화 전체에서 **최대 한 번**: 후보를 더 좁힐 결정적 정보 하나가 필요할 때만 followUpQuestion으로 물어라. 이때도 matchedIds는 반드시 함께 제시한다. followUpOptions에 고객이 탭해서 답할 수 있는 선택지 2~4개(각 8자 이내)를 담아라. 이미 한 번 물었다면 더 묻지 말고(followUpQuestion=null) 지금 정보로 확정해라.
-5. 고객이 새상품/중고 여부를 말하면 존중해라. 매물 목록의 상태(새상품/중고) 컬럼을 참고.
+5. 고객이 새상품/중고 여부를 말하면 존중해라. 매물 목록의 상태(새/중고) 컬럼을 참고.
+   특히 "얼마나 아껴?", "새상품 대비", "절약" 같은 질문이면 **상태=중고이면서 마지막 컬럼이 '절약비교가능'인 매물을 반드시 우선** 골라라. 그 매물들만 새상품 기준가와의 절약액 계산서가 붙는다. 마지막 컬럼이 '-'인 매물을 "절약 비교 가능"이라고 말하지 마라.
 6. 가격은 절대 언급하지 마라. 가격 비교는 시스템이 정확한 데이터로 계산해 붙인다.
 7. 말투: 따뜻한 한국어 존댓말, 2~3문장, 쉬운 말. 외국어 용어는 괄호로 풀어줘라.
 8. 요청한 브랜드·종류가 목록에 아예 없으면 솔직히 없다고 말하고, 명품 가방·지갑(15개 브랜드)과 패션·뷰티·생활 카테고리를 취급 중이라고 안내해라.
@@ -141,7 +142,7 @@ const catalogBlock = (pool) =>
   pool
     .map(
       (p) =>
-        `${p.id}|${p.brand}|${p.category}|${p.model || '-'}|${p.condition === 'new' ? '새' : '중고'}|${p.seller}|${p.rawTitle.slice(0, 45)}${p.tag ? ` #${p.tag.slice(0, 25)}` : ''}`
+        `${p.id}|${p.brand}|${p.category}|${p.model || '-'}|${p.condition === 'new' ? '새' : '중고'}|${p.seller}|${p.rawTitle.slice(0, 45)}${p.tag ? ` #${p.tag.slice(0, 25)}` : ''}|${HAS_NEW_COMPARE.has(p.id) ? '절약비교가능' : '-'}`
     )
     .join('\n')
 
@@ -169,7 +170,7 @@ export default async function handler(req, res) {
   const chatMessages = [
     {
       role: 'system',
-      content: `${SYSTEM_PROMPT}\n\n[매물 목록] (질문과 관련된 상품만 추린 것)\nid|브랜드|종류|모델|상태|판매처|상품명 #태그\n${catalogBlock(pool)}`,
+      content: `${SYSTEM_PROMPT}\n\n[매물 목록] (질문과 관련된 상품만 추린 것)\nid|브랜드|종류|모델|상태|판매처|상품명 #태그|절약비교\n${catalogBlock(pool)}`,
     },
     ...history,
   ]
@@ -243,6 +244,23 @@ export default async function handler(req, res) {
       if (fallback.length > 0) {
         matched = fallback
         reply += ' 말씀하신 조건과 가까운 매물부터 보여드릴게요.'
+      }
+    }
+
+    // 절약 질문 보장: "얼마나 아껴?" 류 질문인데 절약 계산서가 붙는 매물이 하나도
+    // 없으면, 검색 풀에서 절약률이 가장 큰 매물을 서버가 직접 채워 넣는다.
+    // (E2E에서 AI가 계산서 없는 매물을 '절약 비교 가능'이라 잘못 고르는 사례를 확인 —
+    //  핵심 가치가 걸린 경로는 모델 판단에 맡기지 않는다)
+    const wantsSavings = /아껴|아낄|절약|새상품\s*대비|얼마나\s*(싸|저렴)/.test(userText)
+    if (wantsSavings && !matched.some((p) => HAS_NEW_COMPARE.has(p.id))) {
+      const best = pool
+        .filter((p) => HAS_NEW_COMPARE.has(p.id))
+        .map((p) => ({ p, i: priceIntel(p) }))
+        .filter((x) => x.i?.vsNewPct > 0)
+        .sort((a, b) => b.i.vsNewPct - a.i.vsNewPct)[0]
+      if (best) {
+        matched = [best.p, ...matched.filter((p) => p.id !== best.p.id)].slice(0, 3)
+        reply += ' 새상품 대비 절약액이 계산되는 매물을 함께 담았어요.'
       }
     }
 

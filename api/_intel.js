@@ -94,6 +94,12 @@ export function priceIntel(product) {
   }
 }
 
+// 새상품 기준가가 존재해 '절약 계산서'를 보여줄 수 있는 중고 매물 id 집합.
+// chat.js가 카탈로그 라인에 표시해, "얼마나 아껴?" 질문에 AI가 이 매물을 우선 고르게 한다.
+export const HAS_NEW_COMPARE = new Set(
+  CATALOG.filter((p) => p.condition === 'used' && priceIntel(p)?.newBest).map((p) => p.id)
+)
+
 // ---- self-check (순수 함수 검증): node api/_intel.js ----
 if (process.argv[1]?.endsWith('_intel.js')) {
   const { strict: assert } = await import('node:assert')
