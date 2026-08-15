@@ -33,6 +33,17 @@ const PER_QUERY = 15
 const MIN_PRICE = 50_000 // 이하는 부속품·가품·낚시 매물일 확률이 높다
 const MAX_PRICE = 30_000_000
 
+// 상품 본체가 아닌 매물. 실제로 "샤넬 가방"을 물었을 때 7만원짜리 빈 상자가
+// 매칭되는 걸 확인하고 추가했다. (README '겪은 어려움' 참고)
+// 주의: '박스'를 통으로 막으면 "가방 + 박스" 같은 정상 매물까지 죽는다.
+//       '참'을 막으면 '참월렛'(charm wallet)이 죽는다. 그래서 합성어로만 막는다.
+const EXCLUDE = [
+  '쇼핑백', '종이가방', '자석박스', '가방박스', '박스만', '빈박스', '더스트백',
+  '보증서만', '키링', '스티커', '카탈로그', '리폼', '수선', '부자재', '굿즈', '공병',
+]
+// 타깃 브랜드와 무관한 브랜드가 섞인 매물(콜라보 사칭·묶음판매)도 제외한다.
+const OFF_BRAND = ['아디다스', '나이키', '스투시', '슈프림', '미우미우', '에르메스']
+
 // 앞쪽 규칙이 우선(장지갑이 '지갑'보다 먼저 매칭돼야 함).
 const CATEGORY_RULES = [
   ['카드지갑', ['카드지갑', '카드케이스', '카드홀더', '명함지갑', '오거나이저']],
@@ -88,7 +99,11 @@ async function crawlQuery({ q, brand }) {
     const price = Number(raw.price)
     // 광고·가격이상·브랜드 불일치 매물은 버린다
     if (raw.ad || !rawTitle || !price || price < MIN_PRICE || price > MAX_PRICE) continue
-    if (!flatten(rawTitle).includes(flatten(brand))) continue
+
+    const flatTitle = flatten(rawTitle)
+    if (!flatTitle.includes(flatten(brand))) continue
+    if (EXCLUDE.some((k) => flatTitle.includes(k))) continue
+    if (OFF_BRAND.some((b) => flatTitle.includes(b))) continue
 
     // 상품명 + 판매자 태그를 합쳐야 모델/종류 추출 정확도가 올라간다
     const searchText = `${rawTitle} ${raw.tag || ''}`
