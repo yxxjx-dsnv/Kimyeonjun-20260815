@@ -169,7 +169,7 @@ function ProductCard({ product, fav, onFav }) {
       <PeerList intel={intel} />
 
       <a className="card__cta" href={product.url} target="_blank" rel="noreferrer">
-        {product.seller === '다나와 최저가' ? '판매처별 가격 보기' : `${product.seller}에서 보기`}
+        {product.condition === 'new' ? '최저가 구매하기' : '매물 보러 가기'}
       </a>
     </article>
   )
@@ -231,13 +231,13 @@ function ChatView({ favs, toggleFav }) {
         {turns.length === 0 && (
           <div className="intro">
             <p className="intro__hello">
-              아 그거… <span>뭐였지?</span>
+              구매하고 싶은 <span>명품</span>이 있으신가요?
             </p>
             <p className="intro__lead">
-              이름은 몰라도 괜찮아요. 색, 무늬, 모양 — 기억나는 대로 말하면 찾아드리고,
-              새상품·중고 가격까지 비교해 드려요.
+              정확한 상품명을 몰라도 괜찮습니다. 색상, 소재, 장식처럼 기억나는 특징을
+              말씀해 주시면 가장 비슷한 상품을 찾아 새상품·중고 가격까지 비교해 드립니다.
             </p>
-            <p className="intro__label">이렇게 말해보세요</p>
+            <p className="intro__label">이렇게 물어보실 수 있어요</p>
             <div className="chips">
               {EXAMPLES.map((ex) => (
                 <button key={ex} className="chip" onClick={() => { setInput(ex); inputRef.current?.focus() }}>
@@ -291,15 +291,17 @@ function ChatView({ favs, toggleFav }) {
           ref={inputRef}
           rows={1}
           value={input}
-          placeholder="예) 검정 가죽에 금장 달린 샤넬 반지갑"
+          placeholder="메시지를 입력하세요"
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(input) }
           }}
           aria-label="찾는 물건 설명"
         />
-        <button className="composer__send" onClick={() => send(input)} disabled={loading || !input.trim()}>
-          찾아줘
+        <button className="composer__send" onClick={() => send(input)} disabled={loading || !input.trim()} aria-label="전송">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M5 12h13M13 6l6 6-6 6" />
+          </svg>
         </button>
       </div>
     </>
@@ -439,8 +441,12 @@ export default function App() {
     <div className="stage">
       <div className="phone">
         <header className="appbar">
-          <h1 className="wordmark">그거 있잖아</h1>
-          <p className="appbar__sub">이름은 몰라도 찾아드려요</p>
+          <div className="brandrow">
+            <span className="brandmark" aria-hidden="true" />
+            <h1 className="wordmark">shopport</h1>
+            <span className="featurechip">명품 에이전트</span>
+          </div>
+          <p className="appbar__sub">이름을 몰라도, 기억나는 특징만으로 찾아드립니다</p>
         </header>
 
         {tab === 'chat' && <ChatView favs={favs} toggleFav={toggleFav} />}
@@ -474,7 +480,10 @@ export default function App() {
           </div>
         )}
       </div>
-      <p className="colophon">번개장터(중고 매물)·다나와(새상품 가격)를 수집해 만든 데모입니다.</p>
+      <p className="colophon">
+        레브잇 PMF 과제 프로토타입 — 쇼포트의 UX 문법을 차용한 데모이며 실제 쇼포트 서비스가
+        아닙니다. 데이터: 번개장터(중고 매물) · 다나와(새상품 가격).
+      </p>
     </div>
   )
 }
