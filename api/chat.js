@@ -264,8 +264,9 @@ export default async function handler(req, res) {
       }
     }
 
+    // 되묻기 1회 제한: 프롬프트 지시와 별개로, 2번째 유저 턴부터는 코드가 질문을 무조건 차단한다.
     const followUpQuestion =
-      typeof parsed.followUpQuestion === 'string' && parsed.followUpQuestion.trim()
+      userTurns < 2 && typeof parsed.followUpQuestion === 'string' && parsed.followUpQuestion.trim()
         ? parsed.followUpQuestion
         : null
     const followUpOptions =

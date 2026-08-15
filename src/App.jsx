@@ -226,7 +226,9 @@ function ChatView({ favs, toggleFav }) {
         body: JSON.stringify({ messages: next.map(({ role, content }) => ({ role, content })) }),
       })
       const data = await res.json().catch(() => ({})) // 게이트웨이 HTML 오류 페이지 대비
-      if (!res.ok) throw new Error(data.error || '서버 응답에 문제가 있어요. 잠시 후 다시 시도해 주세요.')
+      if (!res.ok || typeof data.reply !== 'string') {
+        throw new Error(data.error || '서버 응답에 문제가 있어요. 잠시 후 다시 시도해 주세요.')
+      }
       setTurns([
         ...next,
         {

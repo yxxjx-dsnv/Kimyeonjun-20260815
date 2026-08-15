@@ -7,7 +7,10 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "crawl": "node crawler/crawl.js"
+    "crawl": "node crawler/crawl.js",
+    "test": "node api/_intel.js && node api/chat.js && node tests/render.test.mjs",
+    "test:api": "node --env-file=.env.local tests/api.e2e.mjs",
+    "test:browser": "node tests/browser.e2e.mjs"
   },
   "dependencies": {
     "react": "^18.3.1",
