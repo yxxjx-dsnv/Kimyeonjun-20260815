@@ -33,13 +33,14 @@ const COLOR_WORDS = [
 const flat = (s) => (s || '').replace(/\s+/g, '')
 const won = (n) => n.toLocaleString('ko-KR')
 
-/** 대화 전체 텍스트에서 언급된 카탈로그 브랜드를 찾는다. */
-function detectBrand(text) {
+/** 대화 전체 텍스트에서 언급된 카탈로그 브랜드를 전부 찾는다. */
+function detectBrands(text) {
   const t = flat(text)
-  return BRANDS.find(
+  return BRANDS.filter(
     (b) => t.includes(b) || (BRAND_ALIASES[b] || []).some((a) => t.includes(a))
   )
 }
+const detectBrand = (text) => detectBrands(text)[0]
 
 /**
  * AI가 후보를 못 골랐을 때의 결정론적 백스톱.
@@ -75,6 +76,7 @@ const SYSTEM_PROMPT = `너는 '그거 있잖아'의 AI 쇼핑 비서야. 고객�
 절대 규칙:
 1. 반드시 목록에 있는 id만 고른다. 목록에 없는 상품을 지어내지 마라.
 2. **후보 우선**: 고객이 말한 브랜드가 목록에 있으면 matchedIds를 절대 비우지 마라. 완벽히 일치하지 않아도 가장 가까운 후보 1~3개를 골라라. "없다"고 답하는 경우는 브랜드 자체가 목록에 없을 때뿐이다. (현재 취급 브랜드: ${BRANDS.join(', ')})
+   단, **후보는 반드시 고객이 말한 브랜드의 매물이어야 한다.** 다른 브랜드에 색·소재·디자인이 더 비슷한 상품이 있어도 절대 대신 제시하지 마라. 브랜드가 틀린 추천은 오답이다.
 3. reply 첫 문장은 고객이 말한 특징을 그대로 인용하며 시작해라. (예: "말씀하신 '베이지에 남색 무늬'는 디올 오블리크 패턴이에요.") 각 후보가 묘사의 어떤 부분과 맞는지, 어떤 부분은 판매글에 없어 확인이 필요한지 솔직히 말해라.
 4. 질문은 대화 전체에서 **최대 한 번**: 후보를 더 좁힐 결정적 정보 하나가 필요할 때만 followUpQuestion으로 물어라. 이때도 matchedIds는 반드시 함께 제시한다. followUpOptions에 고객이 탭해서 답할 수 있는 선택지 2~4개(각 8자 이내)를 담아라. 이미 한 번 물었다면 더 묻지 말고(followUpQuestion=null) 지금 정보로 확정해라.
 5. 고객이 새상품/중고 여부를 말하면 존중해라. 매물 목록의 상태(새상품/중고) 컬럼을 참고.
@@ -158,6 +160,15 @@ export default async function handler(req, res) {
       .map((id) => byId.get(String(id)))
       .filter(Boolean)
 
+    // 브랜드 가드: 고객이 브랜드를 말했다면 다른 브랜드 매물은 코드 레벨에서 걸러낸다.
+    // (실사용에서 "샤넬 누빔 금색 체인"에 생로랑 마틀라세가 카드로 나온 사례 — LLM이
+    //  속성 유사도만 보고 브랜드를 무시하는 실수는 신뢰를 즉시 무너뜨리므로
+    //  프롬프트에만 맡기지 않는다. 걸러서 비면 아래 백스톱이 올바른 브랜드로 채운다.)
+    const mentionedBrands = detectBrands(userText)
+    if (mentionedBrands.length > 0) {
+      matched = matched.filter((p) => mentionedBrands.includes(p.brand))
+    }
+
     let reply = typeof parsed.reply === 'string' ? parsed.reply : '조금 더 자세히 말씀해 주시겠어요?'
 
     // 백스톱: AI가 빈손인데 언급된 브랜드가 카탈로그에 있으면 키워드 매칭이 후보를 채운다.
@@ -196,6 +207,8 @@ if (process.argv[1]?.endsWith('chat.js')) {
   const r2 = keywordFallback('보테가 반지갑 초록색')
   assert.ok(r2.length > 0 && r2.every((p) => p.brand === '보테가베네타'), '축약형 브랜드 인식')
   assert.equal(keywordFallback('아무 브랜드도 없는 문장').length, 0, '브랜드 없으면 빈 배열')
+  assert.deepEqual(detectBrands('샤넬이랑 입생 중에 고민'), ['샤넬', '생로랑'], '복수 브랜드 감지')
+  assert.deepEqual(detectBrands('검정 누빔 가방'), [], '브랜드 미언급이면 가드 미작동')
   console.log(`✓ keywordFallback OK — 샤넬:${r1.length}건(${r1.map((p) => p.category).join(',')}) / 보테가:${r2.length}건`)
   console.log(`  예시: ${r1[0].name.slice(0, 40)} / ${won(r1[0].price)}원`)
 }
