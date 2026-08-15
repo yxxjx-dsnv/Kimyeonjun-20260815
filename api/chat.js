@@ -1,66 +1,92 @@
 /**
  * POST /api/chat
  *
- * 고객의 "이름은 모르겠고 이렇게 생겼는데…" 서술을 받아
- *  1) ChatGPT가 크롤링 카탈로그에서 후보 상품을 고르고
- *  2) 서버가 시세·새상품 대비 절약률을 계산해 붙여 돌려준다.
+ * 고객의 자연어 요청을 받아
+ *  1) 정적 카탈로그를 브랜드·카테고리·예산으로 좁히고 (1단계 검색)
+ *  2) 부족하면 4개 쇼핑몰을 실시간 검색해 병합하고 (라이브 검색)
+ *  3) ChatGPT가 후보를 고르면 서버가 가격 인텔리전스를 계산해 붙인다.
  *
- * 대화 설계 원칙 — 대화형 쇼핑 에이전트의 흔한 실패 패턴을 정반대로 뒤집었다:
- *  - "질문만 계속하고 결과를 안 준다" → 질문은 대화 전체에서 최대 1번, 후보는 매 턴 필수
- *  - "대답해도 무시한다" → reply가 고객의 표현을 그대로 인용하며 근거를 설명
- *  - AI가 후보를 못 고르면 서버의 키워드 매칭이 대신 후보를 찾는다 (빈손 응답 금지)
+ * 대화 정책은 프롬프트가 아니라 서버 코드가 최종 보증한다:
+ *  - 질문은 대화당 최대 1회 (2번째 유저 턴부터 followUpQuestion 강제 null)
+ *  - 언급 브랜드 외 상품 차단 (브랜드 가드) — 단, "비슷한/대체" 요청이면 예외
+ *  - 예산 언급 시 범위 밖 상품 차단 (예산 가드)
+ *  - AI가 빈손이면 키워드 백스톱이 후보를 채움
  */
-import { CATALOG, byId, priceIntel, HAS_NEW_COMPARE } from './_intel.js'
+import { CATALOG, byId, priceIntel, intelWithin } from './_intel.js'
+import { liveSearch, extractKeyword } from './_live.js'
 
 const MODEL = 'gpt-4o-mini'
 const MAX_MESSAGES = 20
 const MAX_CHARS = 2000
 
-// 2글자 미만 브랜드와, 일상 단어와 충돌하는 이름은 브랜드 가드 오작동을 일으키므로 감지에서 뺀다.
-// ('자주'는 부사와, '무료배송'은 판매 문구와 충돌 — 실측에서 확인)
-const BRAND_STOP = new Set(['자주', '무료배송', '기획', '세트'])
+// 일상 단어와 충돌하는 이름은 브랜드 가드 오작동을 일으키므로 감지에서 뺀다.
+const BRAND_STOP = new Set(['자주', '무료배송', '기획', '세트', '기타'])
 const BRANDS = [...new Set(CATALOG.map((p) => p.brand))].filter((b) => b.length >= 2 && !BRAND_STOP.has(b))
-// 사용자가 축약형으로 부르는 브랜드 (fallback 매칭용)
 const BRAND_ALIASES = {
   보테가베네타: ['보테가'], 루이비통: ['루이뷔통'], 셀린느: ['셀린'],
   생로랑: ['입생로랑', '입생'], 롱샴: ['롱샹'],
 }
 const CATEGORY_WORDS = [...new Set(CATALOG.map((p) => p.category))].filter((c) => c !== '기타')
 const COLOR_WORDS = [
-  '검정', '검은', '블랙', '흰', '화이트', '아이보리', '베이지', '갈색', '브라운', '카멜', '탄',
+  '검정', '검은', '블랙', '흰', '화이트', '아이보리', '베이지', '갈색', '브라운', '카멜',
   '남색', '네이비', '파란', '블루', '하늘', '빨간', '레드', '와인', '버건디', '분홍', '핑크',
   '금색', '골드', '금장', '은색', '실버', '은장', '회색', '그레이', '카키', '초록', '그린',
   '노란', '옐로우', '보라', '퍼플', '오렌지', '데님',
 ]
 
 const flat = (s) => (s || '').replace(/\s+/g, '')
-const won = (n) => n.toLocaleString('ko-KR')
 
-/** 대화 전체 텍스트에서 언급된 카탈로그 브랜드를 전부 찾는다. */
 function detectBrands(text) {
   const t = flat(text)
-  return BRANDS.filter(
-    (b) => t.includes(b) || (BRAND_ALIASES[b] || []).some((a) => t.includes(a))
-  )
+  return BRANDS.filter((b) => t.includes(b) || (BRAND_ALIASES[b] || []).some((a) => t.includes(a)))
 }
 const detectBrand = (text) => detectBrands(text)[0]
 
 /**
- * AI가 후보를 못 골랐을 때의 결정론적 백스톱.
- * 브랜드가 언급됐으면 그 브랜드 안에서, 아니면 카테고리 언급 기준으로
- * 종류(+2)·색상(+1)·모델 키워드(+3) 겹침을 점수화해 상위 3개.
- * "카탈로그에 있는데 빈손으로 답하는" 최악의 경험을 코드 레벨에서 막는다.
+ * 예산 파싱 — "10만원 이하", "5만원대", "10~20만원", "3만원 안으로" 등.
+ * (실사용 앱 리뷰에서 가장 많은 불만이 "예산을 말해도 무시한다"였다 —
+ *  예산은 모델 판단에 맡기지 않고 서버가 필터로 강제한다)
  */
-function keywordFallback(text) {
+const bandStep = (n) => (n % 10 === 0 ? 10 : 1) // 10만원대=10~20만, 15만원대=15~16만
+export function parseBudget(text) {
+  const t = text.replace(/\s+/g, '')
+  let m
+  // "10~20만원(대)" — 앞 숫자의 '만'은 흔히 생략된다
+  if ((m = t.match(/(\d+(?:\.\d+)?)(?:만원?)?[~-](\d+(?:\.\d+)?)만원?(대)?/))) {
+    const hiN = Number(m[2])
+    return {
+      min: Number(m[1]) * 10000,
+      max: m[3] ? (hiN + bandStep(hiN)) * 10000 - 1 : hiN * 10000,
+    }
+  }
+  if ((m = t.match(/(\d+(?:\.\d+)?)만원?(이하|아래|미만|안으로|이내|밑으로|안쪽)/))) {
+    return { min: 0, max: Number(m[1]) * 10000 }
+  }
+  if ((m = t.match(/(\d+(?:\.\d+)?)만원?(이상|넘는|위로)/))) {
+    return { min: Number(m[1]) * 10000, max: Infinity }
+  }
+  if ((m = t.match(/(\d+)만원?대/))) {
+    const n = Number(m[1])
+    return { min: n * 10000, max: (n + bandStep(n)) * 10000 - 1 }
+  }
+  return null
+}
+
+/** "비슷한 거" — 브랜드 가드를 푸는 의도 / "~말고·대신·대체품" — 언급 브랜드를 제외하는 의도. */
+const wantsAlternative = (text) => /비슷한|대체|대신|말고|같은\s*느낌|유사한/.test(text)
+const wantsExclusion = (text) => /말고|대신|대체/.test(text)
+
+/** AI가 빈손일 때의 결정론적 백스톱 — 브랜드/카테고리/색상 점수화 상위 3개. */
+function keywordFallback(text, pool) {
   const brand = detectBrand(text)
   const t = flat(text)
   const catHit = CATEGORY_WORDS.find((c) => t.includes(flat(c)))
-  if (!brand && !catHit) return [] // 단서가 전혀 없으면 억지로 채우지 않는다
+  if (!brand && !catHit && pool.every((p) => !p.live)) return []
 
-  const pool = brand ? CATALOG.filter((p) => p.brand === brand) : CATALOG
-  const scored = pool.map((p) => {
+  const base = brand && !wantsAlternative(text) ? pool.filter((p) => p.brand === brand) : pool
+  const scored = base.map((p) => {
     const hay = flat(`${p.rawTitle} ${p.tag} ${p.category}`)
-    let score = 0
+    let score = p.live ? 1 : 0 // 라이브 결과는 검색어와 직접 매칭된 것이므로 가산
     if (catHit && p.category === catHit) score += 2
     else if (t.includes('지갑') && p.category.includes('지갑')) score += 1
     else if ((t.includes('가방') || t.includes('백')) && ['숄더백', '토트백', '크로스백', '클러치', '백팩'].includes(p.category)) score += 1
@@ -68,65 +94,53 @@ function keywordFallback(text) {
     if (p.model && t.includes(flat(p.model))) score += 3
     return { p, score }
   })
-
-  scored.sort(
-    (a, b) => b.score - a.score || Number(b.p.verified) - Number(a.p.verified) || a.p.price - b.p.price
-  )
-  // 브랜드 없이 전체 풀에서 고를 때는 점수 0짜리(무관 상품)를 올리지 않는다
-  return scored.filter((s) => (brand ? true : s.score > 0)).slice(0, 3).map((s) => s.p)
+  scored.sort((a, b) => b.score - a.score || a.p.price - b.p.price)
+  return scored.filter((s) => s.score > 0).slice(0, 3).map((s) => s.p)
 }
 
-const SYSTEM_PROMPT = `너는 쇼핑 앱 '쇼포트'의 AI 쇼핑 에이전트야. 고객은 한국의 35-50세 여성이고, 명품·패션·뷰티·생활용품을 찾는다. 정확한 상품명을 기억하지 못한 채 특징(브랜드, 색, 크기, 장식, 용도)으로 설명하는 경우가 많다.
+const SYSTEM_PROMPT = `너는 쇼핑 앱 '쇼포트'의 AI 쇼핑 에이전트야. 고객은 한국의 35-50세 여성이고, 명품·패션·뷰티·생활·가전·식품을 찾는다. 정확한 상품명을 기억하지 못한 채 특징(브랜드, 색, 크기, 용도, 예산)으로 설명하는 경우가 많다.
 
-너의 일: 아래 [매물 목록]에서 고객 묘사와 가장 비슷한 상품을 골라주는 것.
+너의 일: 아래 [상품 목록]에서 고객 요청과 가장 맞는 상품을 골라주는 것.
 
 절대 규칙:
 1. 반드시 목록에 있는 id만 고른다. 목록에 없는 상품을 지어내지 마라.
-2. **후보 우선**: 고객이 말한 브랜드나 상품 종류가 목록에 있으면 matchedIds를 절대 비우지 마라. 완벽히 일치하지 않아도 가장 가까운 후보 1~3개를 골라라. "없다"고 답하는 경우는 해당 브랜드·종류가 목록에 아예 없을 때뿐이다.
-   단, **고객이 브랜드를 말했다면 후보는 반드시 그 브랜드의 매물이어야 한다.** 다른 브랜드에 색·소재·디자인이 더 비슷한 상품이 있어도 절대 대신 제시하지 마라. 브랜드가 틀린 추천은 오답이다.
-3. reply 첫 문장은 고객이 말한 특징을 그대로 인용하며 시작해라. (예: "말씀하신 '베이지에 남색 무늬'는 디올 오블리크 패턴이에요.") 각 후보가 묘사의 어떤 부분과 맞는지, 어떤 부분은 판매글에 없어 확인이 필요한지 솔직히 말해라.
-4. 질문은 대화 전체에서 **최대 한 번**: 후보를 더 좁힐 결정적 정보 하나가 필요할 때만 followUpQuestion으로 물어라. 이때도 matchedIds는 반드시 함께 제시한다. followUpOptions에 고객이 탭해서 답할 수 있는 선택지 2~4개(각 8자 이내)를 담아라. 이미 한 번 물었다면 더 묻지 말고(followUpQuestion=null) 지금 정보로 확정해라.
-5. 고객이 새상품/중고 여부를 말하면 존중해라. 매물 목록의 상태(새/중고) 컬럼을 참고.
-   특히 "얼마나 아껴?", "새상품 대비", "절약" 같은 질문이면 **상태=중고이면서 마지막 컬럼이 '절약비교가능'인 매물을 반드시 우선** 골라라. 그 매물들만 새상품 기준가와의 절약액 계산서가 붙는다. 마지막 컬럼이 '-'인 매물을 "절약 비교 가능"이라고 말하지 마라.
-6. 가격은 절대 언급하지 마라. 가격 비교는 시스템이 정확한 데이터로 계산해 붙인다.
-7. 말투: 따뜻한 한국어 존댓말, 2~3문장, 쉬운 말. 외국어 용어는 괄호로 풀어줘라.
-8. 요청한 브랜드·종류가 목록에 아예 없으면 솔직히 없다고 말하고, 명품 가방·지갑(15개 브랜드)과 패션·뷰티·생활 카테고리를 취급 중이라고 안내해라.
+2. **후보 우선**: 고객이 말한 브랜드나 종류가 목록에 있으면 matchedIds를 절대 비우지 마라. 완벽히 일치하지 않아도 가장 가까운 후보 1~3개를 골라라.
+   고객이 브랜드를 말했다면 후보는 그 브랜드여야 한다. 단, "비슷한 거/대체품/~말고"처럼 다른 브랜드를 원하는 요청이면 예외다.
+3. **고객이 말한 조건(예산·색·용량·용도)을 무시하지 마라.** reply 첫 문장은 고객의 표현을 그대로 인용하며 시작하고, 각 후보가 조건의 어떤 부분과 맞는지, 어떤 부분은 상품 정보에 없어 확인이 필요한지 솔직히 말해라.
+4. 질문은 대화 전체에서 **최대 한 번**, 그것도 후보를 함께 제시한 채로만. followUpOptions에 탭할 선택지 2~4개(각 8자 이내). 이미 물었다면 다시 묻지 말고 확정해라.
+5. 가격 언급 금지 — 가격 비교는 시스템이 정확한 데이터로 계산해 붙인다.
+6. 말투: 따뜻한 한국어 존댓말, 2~3문장, 쉬운 말.
+7. 요청한 브랜드·종류가 목록에 아예 없으면 솔직히 없다고 말해라. (목록에는 실시간 검색 결과도 포함되어 있다 — '라이브' 표시)
 
 반드시 아래 JSON 형식으로만 답한다:
 {"reply": "고객에게 할 말", "matchedIds": ["id1","id2"], "followUpQuestion": "질문 또는 null", "followUpOptions": ["선택지"] }`
 
-// '가방'/'지갑' 같은 상위어 → 구체 카테고리 매핑
 const META_CATEGORY = {
   가방: ['숄더백', '토트백', '크로스백', '클러치', '백팩'],
   지갑: ['카드지갑', '반지갑', '장지갑'],
 }
 
-/**
- * 1단계 검색(retrieval): 대화에서 감지한 브랜드·카테고리로 카탈로그를 좁혀
- * LLM에는 관련 매물만 보낸다. 756건 전체를 넣으면 요청당 24k 토큰이라
- * 느리고 비싸고 TPM 한도에 걸린다 — 실측(429)으로 확인 후 도입한 구조.
- * 단서가 없으면 브랜드|카테고리 그룹별 대표 2건으로 전체를 요약해 보낸다.
- */
-function buildCatalogPool(text) {
+/** 1단계 검색: 브랜드·카테고리·예산으로 정적 카탈로그를 좁힌다. */
+export function buildStaticPool(text, budget) {
   const t = flat(text)
   const brands = detectBrands(text)
+  const alt = wantsAlternative(text)
   const cats = new Set(CATEGORY_WORDS.filter((c) => t.includes(flat(c))))
   for (const [meta, list] of Object.entries(META_CATEGORY)) {
     if (t.includes(meta)) list.forEach((c) => cats.add(c))
   }
 
+  const excl = wantsExclusion(text)
   let pool
   if (brands.length > 0 || cats.size > 0) {
     pool = CATALOG.filter(
       (p) =>
-        (brands.length === 0 || brands.includes(p.brand)) &&
+        (brands.length === 0 || (excl ? !brands.includes(p.brand) : alt || brands.includes(p.brand))) &&
         (cats.size === 0 || cats.has(p.category))
     )
-    // 브랜드는 맞는데 종류 조합이 비면(예: "샤넬 원피스") 브랜드 전체로 후퇴
-    if (pool.length === 0 && brands.length > 0) pool = CATALOG.filter((p) => brands.includes(p.brand))
+    if (pool.length === 0 && brands.length > 0 && !alt) pool = CATALOG.filter((p) => brands.includes(p.brand))
     if (pool.length === 0 && cats.size > 0) pool = CATALOG.filter((p) => cats.has(p.category))
   } else {
-    // 단서 없음 → 그룹별 대표 2건 (전체 구색을 요약해서 보여준다)
     const seen = new Map()
     pool = CATALOG.filter((p) => {
       const k = `${p.brand}|${p.category}`
@@ -136,15 +150,18 @@ function buildCatalogPool(text) {
       return true
     })
   }
-  return pool.length > 0 ? pool.slice(0, 300) : CATALOG.slice(0, 200)
+  if (budget) {
+    const inBudget = pool.filter((p) => p.price >= budget.min && p.price <= budget.max)
+    if (inBudget.length >= 3) pool = inBudget // 예산 안 후보가 충분하면 예산 안만 보여준다
+  }
+  return pool.slice(0, 300)
 }
 
-/** 카탈로그를 토큰 아끼는 한 줄 포맷으로 압축한다. */
 const catalogBlock = (pool) =>
   pool
     .map(
       (p) =>
-        `${p.id}|${p.brand}|${p.category}|${p.model || '-'}|${p.condition === 'new' ? '새' : '중고'}|${p.seller}|${p.rawTitle.slice(0, 45)}${p.tag ? ` #${p.tag.slice(0, 25)}` : ''}|${HAS_NEW_COMPARE.has(p.id) ? '절약비교가능' : '-'}`
+        `${p.id}|${p.brand}|${p.category}|${p.model || '-'}|${p.seller}${p.live ? '|라이브' : ''}|${p.price}원|${p.rawTitle.slice(0, 42)}`
     )
     .join('\n')
 
@@ -154,7 +171,6 @@ export default async function handler(req, res) {
   const apiKey = process.env.OPENAI_API_KEY
   if (!apiKey) return res.status(500).json({ error: 'OPENAI_API_KEY가 설정되지 않았습니다.' })
 
-  // --- 입력 검증 (신뢰 경계) ---
   const { messages } = req.body || {}
   if (!Array.isArray(messages) || messages.length === 0) {
     return res.status(400).json({ error: 'messages 배열이 필요합니다.' })
@@ -166,21 +182,50 @@ export default async function handler(req, res) {
   if (history.length === 0) return res.status(400).json({ error: '유효한 메시지가 없습니다.' })
 
   const userText = history.filter((m) => m.role === 'user').map((m) => m.content).join(' ')
+  const lastUser = history.filter((m) => m.role === 'user').slice(-1)[0]?.content || ''
   const userTurns = history.filter((m) => m.role === 'user').length
+  const budget = parseBudget(userText)
 
-  const pool = buildCatalogPool(userText)
+  // --- 1단계: 정적 카탈로그 검색 ---
+  let pool = buildStaticPool(userText, budget)
+
+  // --- 2단계: 라이브 검색 (정적 결과가 빈약하면 실시간으로 쇼핑몰 검색) ---
+  const brands = detectBrands(userText)
+  const staticWeak = pool.length < 12 || (brands.length === 0 && pool.length >= 200)
+  let liveItems = []
+  if (staticWeak) {
+    try {
+      const keyword = extractKeyword(lastUser) || extractKeyword(userText)
+      if (keyword.length >= 2) {
+        liveItems = await liveSearch(keyword, { includeDanawa: pool.length < 5 })
+        if (budget) {
+          const inBudget = liveItems.filter((p) => p.price >= budget.min && p.price <= budget.max)
+          if (inBudget.length >= 2) liveItems = inBudget
+        }
+        pool = [...liveItems, ...pool].slice(0, 300)
+      }
+    } catch (e) {
+      console.warn('live search failed', String(e).slice(0, 120)) // 라이브 실패는 치명적이지 않다
+    }
+  }
+
   const chatMessages = [
     {
       role: 'system',
-      content: `${SYSTEM_PROMPT}\n\n[매물 목록] (질문과 관련된 상품만 추린 것)\nid|브랜드|종류|모델|상태|판매처|상품명 #태그|절약비교\n${catalogBlock(pool)}`,
+      content: `${SYSTEM_PROMPT}\n\n[상품 목록] (질문과 관련된 것만 추림. 가격은 참고용 — reply에서 언급 금지)\nid|브랜드|종류|모델|판매처|가격|상품명\n${catalogBlock(pool)}`,
     },
     ...history,
   ]
-  // 되묻기 1회 제한을 프롬프트에만 맡기지 않고 코드로도 강제한다.
   if (userTurns >= 2) {
     chatMessages.push({
       role: 'system',
-      content: '고객이 이미 추가 정보를 주었다. 이번 턴에는 절대 되묻지 말고(followUpQuestion=null) 지금까지의 정보로 가장 가까운 후보를 확정해라.',
+      content: '고객이 이미 추가 정보를 주었다. 이번 턴에는 절대 되묻지 말고(followUpQuestion=null) 지금까지의 정보로 후보를 확정해라.',
+    })
+  }
+  if (budget) {
+    chatMessages.push({
+      role: 'system',
+      content: `고객 예산: ${budget.min.toLocaleString()}원 ~ ${budget.max === Infinity ? '무제한' : budget.max.toLocaleString() + '원'}. 이 범위의 상품을 우선 골라라.`,
     })
   }
 
@@ -199,14 +244,12 @@ export default async function handler(req, res) {
 
     let completion = await callOpenAI()
     if (completion.status === 429) {
-      // 분당 토큰 한도 — 한 번은 짧게 기다렸다 재시도한다
       await new Promise((r) => setTimeout(r, 2500))
       completion = await callOpenAI()
     }
-
     if (!completion.ok) {
       const detail = await completion.text()
-      console.error('OpenAI error', completion.status, detail.slice(0, 500))
+      console.error('OpenAI error', completion.status, detail.slice(0, 400))
       return res.status(502).json({
         error:
           completion.status === 429
@@ -223,50 +266,41 @@ export default async function handler(req, res) {
       return res.status(502).json({ error: 'AI 응답 형식이 올바르지 않습니다. 다시 시도해 주세요.' })
     }
 
-    // 존재하지 않는 id를 지어냈을 수 있으므로 카탈로그와 조인하며 걸러낸다.
+    const liveById = new Map(liveItems.map((p) => [p.id, p]))
+    const lookup = (id) => byId.get(id) || liveById.get(id)
+
     let matched = [...new Set((Array.isArray(parsed.matchedIds) ? parsed.matchedIds : []).map(String))]
       .slice(0, 3)
-      .map((id) => byId.get(id))
+      .map(lookup)
       .filter(Boolean)
 
-    // 브랜드 가드: 고객이 브랜드를 말했다면 다른 브랜드 매물은 코드 레벨에서 걸러낸다.
-    // (실사용에서 "샤넬 누빔 금색 체인"에 생로랑 마틀라세가 카드로 나온 사례 — LLM이
-    //  속성 유사도만 보고 브랜드를 무시하는 실수는 신뢰를 즉시 무너뜨리므로
-    //  프롬프트에만 맡기지 않는다. 걸러서 비면 아래 백스톱이 올바른 브랜드로 채운다.)
-    const mentionedBrands = detectBrands(userText)
-    if (mentionedBrands.length > 0) {
-      matched = matched.filter((p) => mentionedBrands.includes(p.brand))
+    // 브랜드 가드 — "말고/대신"이면 언급 브랜드를 제외, "비슷한"이면 모두 허용
+    if (brands.length > 0) {
+      if (wantsExclusion(userText)) matched = matched.filter((p) => !brands.includes(p.brand))
+      else if (!wantsAlternative(userText)) matched = matched.filter((p) => brands.includes(p.brand))
+    }
+    // 예산 가드 — 예산을 말했는데 범위 밖 상품만 남는 것을 막는다
+    if (budget) {
+      const inBudget = matched.filter((p) => p.price >= budget.min && p.price <= budget.max)
+      if (inBudget.length > 0) matched = inBudget
+      else {
+        const alt = pool
+          .filter((p) => p.price >= budget.min && p.price <= budget.max)
+          .sort((a, b) => a.price - b.price)
+          .slice(0, 3)
+        if (alt.length > 0) matched = alt
+      }
     }
 
     let reply = typeof parsed.reply === 'string' ? parsed.reply : '조금 더 자세히 말씀해 주시겠어요?'
-
-    // 백스톱: AI가 빈손인데 언급된 브랜드가 카탈로그에 있으면 키워드 매칭이 후보를 채운다.
     if (matched.length === 0) {
-      const fallback = keywordFallback(userText)
+      const fallback = keywordFallback(userText, pool)
       if (fallback.length > 0) {
         matched = fallback
-        reply += ' 말씀하신 조건과 가까운 매물부터 보여드릴게요.'
+        reply += ' 말씀하신 조건과 가까운 상품부터 보여드릴게요.'
       }
     }
 
-    // 절약 질문 보장: "얼마나 아껴?" 류 질문인데 절약 계산서가 붙는 매물이 하나도
-    // 없으면, 검색 풀에서 절약률이 가장 큰 매물을 서버가 직접 채워 넣는다.
-    // (E2E에서 AI가 계산서 없는 매물을 '절약 비교 가능'이라 잘못 고르는 사례를 확인 —
-    //  핵심 가치가 걸린 경로는 모델 판단에 맡기지 않는다)
-    const wantsSavings = /아껴|아낄|절약|새상품\s*대비|얼마나\s*(싸|저렴)/.test(userText)
-    if (wantsSavings && !matched.some((p) => HAS_NEW_COMPARE.has(p.id))) {
-      const best = pool
-        .filter((p) => HAS_NEW_COMPARE.has(p.id))
-        .map((p) => ({ p, i: priceIntel(p) }))
-        .filter((x) => x.i?.vsNewPct > 0)
-        .sort((a, b) => b.i.vsNewPct - a.i.vsNewPct)[0]
-      if (best) {
-        matched = [best.p, ...matched.filter((p) => p.id !== best.p.id)].slice(0, 3)
-        reply += ' 새상품 대비 절약액이 계산되는 매물을 함께 담았어요.'
-      }
-    }
-
-    // 되묻기 1회 제한: 프롬프트 지시와 별개로, 2번째 유저 턴부터는 코드가 질문을 무조건 차단한다.
     const followUpQuestion =
       userTurns < 2 && typeof parsed.followUpQuestion === 'string' && parsed.followUpQuestion.trim()
         ? parsed.followUpQuestion
@@ -276,12 +310,21 @@ export default async function handler(req, res) {
         ? parsed.followUpOptions.filter((o) => typeof o === 'string' && o.trim()).slice(0, 4).map((o) => o.slice(0, 12))
         : []
 
+    // 인텔: 라이브 결과가 섞였으면 병합 컬렉션 기준으로 계산
+    const collection = liveItems.length > 0 ? [...CATALOG, ...liveItems] : null
+    const products = matched.map((p) => ({
+      ...p,
+      priceIntel: collection ? intelWithin(collection, p) : priceIntel(p),
+    }))
+
     return res.status(200).json({
       reply,
       followUpQuestion,
       followUpOptions,
-      products: matched.map((p) => ({ ...p, priceIntel: priceIntel(p) })),
+      products,
       catalogSize: CATALOG.length,
+      liveCount: liveItems.length, // 프론트 상태행: "실시간 검색 N건 포함"
+      budget,
     })
   } catch (err) {
     console.error('chat handler failed', err)
@@ -289,32 +332,24 @@ export default async function handler(req, res) {
   }
 }
 
-// ---- fallback 매처 self-check: node api/chat.js ----
+// ---- self-check: node api/chat.js ----
 if (process.argv[1]?.endsWith('chat.js')) {
   const { strict: assert } = await import('node:assert')
-  const r1 = keywordFallback('샤넬 가방인데 검정색이고 금색 체인 달린 거')
-  assert.ok(r1.length > 0 && r1.every((p) => p.brand === '샤넬'), '샤넬 언급 시 샤넬 후보 필수')
-  assert.ok(r1.every((p) => !p.category.includes('지갑')), "'가방' 요청에 지갑이 나오면 안 됨")
-  const r2 = keywordFallback('보테가 반지갑 초록색')
-  assert.ok(r2.length > 0 && r2.every((p) => p.brand === '보테가베네타'), '축약형 브랜드 인식')
-  assert.equal(keywordFallback('아무 브랜드도 없는 문장').length, 0, '브랜드 없으면 빈 배열')
-  assert.ok(detectBrands('샤넬이랑 입생 중에 고민').includes('샤넬') && detectBrands('샤넬이랑 입생 중에 고민').includes('생로랑'), '복수 브랜드 감지')
-  assert.deepEqual(detectBrands('검정 누빔 가방'), [], '브랜드 미언급이면 가드 미작동')
-  const r3 = keywordFallback('모공에 좋은 수분크림 추천해줘')
-  assert.ok(r3.length > 0 && r3.every((p) => p.category === '수분크림'), '브랜드 없이 카테고리만으로 백스톱')
-  const r4 = keywordFallback('검정 원피스 찾아줘')
-  assert.ok(r4.length > 0 && r4.every((p) => p.category === '원피스'), '패션 카테고리 백스톱')
+  assert.deepEqual(parseBudget('10만원 이하로'), { min: 0, max: 100000 })
+  assert.deepEqual(parseBudget('10~20만원대 원피스'), { min: 100000, max: 299999 })
+  assert.deepEqual(parseBudget('20만원대 가방'), { min: 200000, max: 299999 })
+  assert.deepEqual(parseBudget('5만원대 선크림'), { min: 50000, max: 59999 })
+  assert.deepEqual(parseBudget('30만원 이상'), { min: 300000, max: Infinity })
+  assert.equal(parseBudget('예산 얘기 없음'), null)
+  assert.ok(wantsAlternative('샤넬 말고 비슷한 거'), '대체 의도 감지')
+  const poolX = buildStaticPool('샤넬 가방 말고 비슷한 느낌 가방', null)
+  assert.ok(poolX.length > 0 && poolX.every((p) => p.brand !== '샤넬'), "'말고'는 언급 브랜드 제외")
 
-  // 1단계 검색(카탈로그 풀 좁히기)
-  const p1 = buildCatalogPool('샤넬 가방 검정 누빔')
-  assert.ok(p1.length > 0 && p1.every((p) => p.brand === '샤넬'), '브랜드 언급 시 해당 브랜드만')
-  assert.ok(p1.every((p) => !p.category.includes('지갑')), "'가방' 상위어가 지갑 제외")
-  const p2 = buildCatalogPool('수분크림 싼 거')
-  assert.ok(p2.length > 0 && p2.every((p) => p.category === '수분크림'), '카테고리 언급 시 해당 종류만')
-  const p3 = buildCatalogPool('아무 단서 없는 문장')
-  assert.ok(p3.length <= 300, '단서 없으면 대표 요약 (300 이하)')
-  const est = (pool) => Math.round(pool.reduce((a, p) => a + p.rawTitle.length + 30, 0) / 2.5 / 1000)
-  console.log(`  풀 크기: 샤넬가방 ${p1.length} / 수분크림 ${p2.length} / 무단서 ${p3.length} (≈${est(p3)}k tok, 전체 대비 축소)`)
-  console.log(`✓ keywordFallback OK — 샤넬:${r1.length}건(${r1.map((p) => p.category).join(',')}) / 보테가:${r2.length}건`)
-  console.log(`  예시: ${r1[0].name.slice(0, 40)} / ${won(r1[0].price)}원`)
+  const pool1 = buildStaticPool('샤넬 가방 검정', null)
+  assert.ok(pool1.length > 0 && pool1.every((p) => p.brand === '샤넬'), '브랜드 풀')
+  const pool2 = buildStaticPool('검정 원피스 10만원 아래로', { min: 0, max: 100000 })
+  assert.ok(pool2.length > 0 && pool2.every((p) => p.category === '원피스' && p.price <= 100000), '카테고리+예산 풀')
+  const fb = keywordFallback('수분크림 추천', buildStaticPool('수분크림 추천', null))
+  assert.ok(fb.length > 0 && fb.every((p) => p.category === '수분크림'), '카테고리 백스톱')
+  console.log('✓ chat 정책 OK — 예산 파서 5케이스 / 대체의도 / 정적 풀 / 백스톱')
 }

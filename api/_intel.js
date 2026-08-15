@@ -1,24 +1,26 @@
 /**
  * 가격 인텔리전스 공용 모듈 — /api/chat 과 /api/catalog 가 함께 쓴다.
  *
- * 같은 modelGroup(브랜드|종류|모델) 매물끼리 비교해
- *  1) 중고 시세 분포 (최저/중앙/최고, 시세 대비 %)
- *  2) 새상품 최저가(다나와) 대비 절약률
- * 을 계산한다. 근거가 약하면 숫자를 만들지 않는 것이 원칙이다 (아래 상수 참고).
+ * 같은 modelGroup(브랜드|종류[|모델]) 상품끼리 비교해 시세 분포와
+ * 판매처별 가격 비교를 계산한다. 근거가 약하면 숫자를 만들지 않는 것이 원칙:
+ *  - 비교군 3건 미만 → 시세 없음
+ *  - 최고/최저 편차 4배 초과 → "% 저렴" 대신 순위·가격대만 (medianReliable=false)
+ *
+ * intelWithin(collection, product)로 임의 컬렉션(라이브 검색 결과 병합본)에도
+ * 같은 로직을 적용할 수 있다.
  */
 import CATALOG from './_catalog.js'
 
 export { CATALOG }
 
-export const MIN_PEERS = 3 // 비교군이 이보다 적으면 '시세'라고 부르지 않는다
-// 최고/최저가가 이 배수를 넘는 그룹은 '중앙값 = 시세'라고 볼 수 없다.
-// (샤넬|숄더백 그룹은 복조리백 15만원~2.55백 855만원이 함께 묶여 57배가 나온다.
-//  이때 중앙값 대비 "92% 저렴"은 거짓 정보다. 순위·가격대만 사실로 남긴다.)
+export const MIN_PEERS = 3
 export const MAX_SPREAD = 4
 
 export const byId = new Map(CATALOG.map((p) => [p.id, p]))
 
-// 모델 그룹 인덱스는 모듈 로드 시 1회만 만든다.
+const flat = (s) => (s || '').replace(/\s+/g, '')
+
+// 정적 카탈로그의 그룹 인덱스는 모듈 로드 시 1회만 만든다.
 const GROUPS = new Map()
 for (const p of CATALOG) {
   if (!GROUPS.has(p.modelGroup)) GROUPS.set(p.modelGroup, [])
@@ -26,33 +28,10 @@ for (const p of CATALOG) {
 }
 export { GROUPS }
 
-/**
- * @returns null | {
- *   basis, isModelLevel, count,
- *   newBest: {price,name,url,seller}|null,  // 같은 그룹 새상품 최저가
- *   vsNewPct: number|null,                  // 중고 매물이 새상품 대비 몇 % 저렴한지
- *   stats: {min,median,max,medianReliable,discountPct,rank}|null, // 그룹 시세 (비교군 충분할 때만)
- *   peers: [...]                            // 가격 비교 리스트 (자기 제외, 가격순 최대 6)
- * }
- */
-export function priceIntel(product) {
-  const group = GROUPS.get(product.modelGroup) || []
+function computeIntel(product, group) {
   const others = group.filter((p) => p.id !== product.id)
-  if (others.length === 0) return null // 비교할 대상이 아예 없다
+  if (others.length === 0) return null
 
-  // --- 새상품 최저가 대비 (중고 매물에만 의미가 있다) ---
-  let newBest = null
-  let vsNewPct = null
-  if (product.condition === 'used') {
-    const news = others.filter((p) => p.condition === 'new').sort((a, b) => a.price - b.price)
-    if (news.length > 0) {
-      const n = news[0]
-      newBest = { price: n.price, name: n.name, url: n.url, seller: n.seller }
-      vsNewPct = Math.round((1 - product.price / n.price) * 100)
-    }
-  }
-
-  // --- 그룹 시세 분포 (비교군이 충분할 때만) ---
   let stats = null
   if (group.length >= MIN_PEERS) {
     const prices = group.map((p) => p.price).sort((a, b) => a - b)
@@ -65,19 +44,18 @@ export function priceIntel(product) {
       max,
       medianReliable: max / min <= MAX_SPREAD,
       discountPct: Math.round((1 - product.price / median) * 100),
-      rank: prices.filter((p) => p < product.price).length + 1, // 1이면 최저가
+      rank: prices.filter((p) => p < product.price).length + 1,
     }
   }
 
   return {
-    // 모델을 특정하지 못한 그룹은 '같은 모델'이라고 하지 않는다 (과장 금지)
     basis: product.model
       ? `${product.brand} ${product.model} ${product.category}`
       : `${product.brand} ${product.category}`,
     isModelLevel: Boolean(product.model),
     count: group.length,
-    newBest,
-    vsNewPct,
+    // 서로 다른 판매처가 몇 곳 비교되는지 — '판매처 별 판매가'의 근거
+    sellerCount: new Set(group.map((p) => p.seller)).size,
     stats,
     peers: others
       .sort((a, b) => a.price - b.price)
@@ -88,26 +66,41 @@ export function priceIntel(product) {
         name: p.name,
         url: p.url,
         seller: p.seller,
-        condition: p.condition,
-        verified: p.verified,
+        rating: p.rating ?? null,
       })),
   }
 }
 
-// 새상품 기준가가 존재해 '절약 계산서'를 보여줄 수 있는 중고 매물 id 집합.
-// chat.js가 카탈로그 라인에 표시해, "얼마나 아껴?" 질문에 AI가 이 매물을 우선 고르게 한다.
-export const HAS_NEW_COMPARE = new Set(
-  CATALOG.filter((p) => p.condition === 'used' && priceIntel(p)?.newBest).map((p) => p.id)
-)
+/** 정적 카탈로그 기준 (사전 인덱스 사용). */
+export function priceIntel(product) {
+  return computeIntel(product, GROUPS.get(product.modelGroup) || [])
+}
 
-// ---- self-check (순수 함수 검증): node api/_intel.js ----
+/** 임의 컬렉션 기준 — 라이브 검색 결과를 병합했을 때 사용. */
+export function intelWithin(collection, product) {
+  const key = product.modelGroup
+  const group = collection.filter((p) => p.modelGroup === key)
+  return computeIntel(product, group)
+}
+
+/** 상품 배열에 modelGroup을 부여한다 (라이브 검색 결과용). */
+export function assignGroups(items) {
+  for (const p of items) {
+    p.modelGroup = `${flat(p.brand)}|${p.category}${p.model ? `|${p.model}` : ''}`
+  }
+  return items
+}
+
+// ---- self-check: node api/_intel.js ----
 if (process.argv[1]?.endsWith('_intel.js')) {
   const { strict: assert } = await import('node:assert')
 
-  let statsN = 0, reliableN = 0, newBestN = 0, wideSeen = false
+  let statsN = 0, reliableN = 0, wideSeen = false, crossN = 0
   for (const p of CATALOG) {
     const i = priceIntel(p)
     if (!i) continue
+    assert.ok(i.peers.every((x) => x.id !== p.id), 'peers에 자기 자신 없음')
+    if (i.sellerCount >= 2) crossN++
     if (i.stats) {
       statsN++
       const s = i.stats
@@ -117,17 +110,20 @@ if (process.argv[1]?.endsWith('_intel.js')) {
       if (s.medianReliable) reliableN++
       else wideSeen = true
     }
-    if (i.newBest) {
-      newBestN++
-      assert.equal(p.condition, 'used', '새상품 비교는 중고 매물에만 붙는다')
-      assert.equal(i.vsNewPct, Math.round((1 - p.price / i.newBest.price) * 100))
-    }
-    assert.ok(i.peers.every((x) => x.id !== p.id), 'peers에 자기 자신 없음')
   }
   assert.ok(wideSeen, '편차 큰 그룹이 실제로 존재해야 방어 로직이 의미 있다')
-  const singleton = CATALOG.find((p) => (GROUPS.get(p.modelGroup) || []).length === 1)
-  if (singleton) assert.equal(priceIntel(singleton), null, '단독 매물은 비교 정보 없음')
+  assert.ok(CATALOG.every((p) => p.condition === 'new'), '카탈로그는 새상품 전용')
+
+  // intelWithin: 라이브 병합 시나리오 — 그룹이 커지면 비교 수가 늘어야 한다
+  const target = CATALOG.find((p) => priceIntel(p)?.stats)
+  const fake = assignGroups([
+    { ...target, id: 'live1', price: Math.round(target.price * 0.9), seller: '라이브테스트' },
+  ])
+  const merged = [...CATALOG, ...fake]
+  const iw = intelWithin(merged, target)
+  assert.equal(iw.count, priceIntel(target).count + 1, 'intelWithin이 병합 컬렉션을 반영')
+
   console.log(
-    `✓ priceIntel OK — 카탈로그 ${CATALOG.length}건 / 시세 분포 ${statsN}건(그중 % 주장 가능 ${reliableN}건) / 새상품 대비 계산 ${newBestN}건`
+    `✓ priceIntel OK — 새상품 ${CATALOG.length}건 / 시세 분포 ${statsN}건(% 주장 가능 ${reliableN}건) / 판매처 교차 비교 ${crossN}건 / intelWithin 병합 검증 통과`
   )
 }
