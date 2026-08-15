@@ -13,6 +13,10 @@ const MODEL = 'gpt-4o-mini'
 const MAX_MESSAGES = 20
 const MAX_CHARS = 2000
 const MIN_PEERS = 3 // 비교군이 이보다 적으면 '시세'라고 부르지 않는다
+// 최고가/최저가가 이 배수를 넘는 그룹은 '중앙값 = 시세'라고 볼 수 없다.
+// (예: 샤넬|숄더백 그룹은 데님 복조리백 15만원과 2.55 체인백 855만원이 함께 묶여 57배가 나온다.
+//  이때 중앙값 대비 "92% 저렴"은 사실상 거짓 정보다. 순위·가격대만 사실로 남기고 %는 뺀다.)
+const MAX_SPREAD = 4
 
 const byId = new Map(CATALOG.map((p) => [p.id, p]))
 
@@ -31,6 +35,8 @@ function priceIntel(product) {
   if (peers.length < MIN_PEERS) return null
 
   const prices = peers.map((p) => p.price).sort((a, b) => a - b)
+  const min = prices[0]
+  const max = prices[prices.length - 1]
   const median = prices[Math.floor(prices.length / 2)]
   const cheaperThan = prices.filter((p) => p > product.price).length
 
@@ -41,9 +47,12 @@ function priceIntel(product) {
       : `${product.brand} ${product.category}`,
     isModelLevel: Boolean(product.model),
     count: peers.length,
-    min: prices[0],
+    min,
     median,
-    max: prices[prices.length - 1],
+    max,
+    // 중앙값을 '시세'라고 부를 수 있을 만큼 매물이 균질한가.
+    // false면 프론트는 % 대신 순위와 가격대만 보여준다.
+    medianReliable: max / min <= MAX_SPREAD,
     // 중앙값(시세) 대비 몇 % 저렴한지. 음수면 시세보다 비싸다.
     discountPct: Math.round((1 - product.price / median) * 100),
     rank: peers.length - cheaperThan, // 1이면 최저가
@@ -64,11 +73,18 @@ const SYSTEM_PROMPT = `너는 한국의 35-50세 여성 고객을 돕는 중고 
 1. 반드시 [매물 목록]에 있는 id만 고른다. 목록에 없는 상품을 지어내지 마라.
 2. reply에는 고객의 묘사 중 '어떤 부분이 이 매물과 맞는지'를 구체적으로 짚어줘라.
    (예: "말씀하신 베이지에 남색 패턴은 디올 오블리크 자카드가 거의 확실해요.")
-3. 확신이 서지 않으면 후보를 억지로 3개 채우지 말고, followUpQuestion으로
-   색상 / 크기 / 잠금장식 / 패턴 중 딱 하나만 물어봐라. 한 번에 여러 개 묻지 마라.
-4. 가격은 절대 언급하지 마라. 가격 비교는 시스템이 따로 계산해서 붙인다.
-5. 말투: 따뜻하고 다정한 한국어 존댓말. 3문장 이내로 짧게. 전문용어를 쓰면 괄호로 풀어줘라.
-6. 브랜드 자체가 목록에 없으면(예: 에르메스) 솔직히 없다고 말하고, 지금 취급 중인
+3. **고객이 말한 브랜드가 목록에 있으면 matchedIds를 절대 빈 배열로 두지 마라.**
+   완벽히 일치하는 매물이 없어도 브랜드와 종류(가방/지갑)가 맞는 가장 가까운 후보를
+   1~3개 제시하고, 어떤 점이 다르거나 확실하지 않은지 reply에서 솔직히 말해라.
+   후보를 못 주는 경우는 브랜드 자체가 목록에 없을 때뿐이다.
+4. 매물 제목은 판매자가 직접 쓴 것이라 색상·장식 같은 세부 정보가 빠져 있을 수 있다.
+   묘사한 특징이 제목에 없다고 해서 후보에서 빼지 마라. 대신 "색상은 판매글에 적혀 있지
+   않아 확인이 필요해요"처럼 알려줘라.
+5. 확신이 낮으면 followUpQuestion으로 색상 / 크기 / 잠금장식 / 패턴 중 딱 하나만
+   물어봐라. 한 번에 여러 개 묻지 마라. (후보는 그대로 제시하면서 물어봐도 된다)
+6. 가격은 절대 언급하지 마라. 가격 비교는 시스템이 따로 계산해서 붙인다.
+7. 말투: 따뜻하고 다정한 한국어 존댓말. 3문장 이내로 짧게. 전문용어를 쓰면 괄호로 풀어줘라.
+8. 브랜드 자체가 목록에 없으면(예: 에르메스) 솔직히 없다고 말하고, 지금 취급 중인
    브랜드가 디올·샤넬·루이비통·구찌라고 안내해라.
 
 반드시 아래 JSON 형식으로만 답한다:
@@ -159,10 +175,24 @@ if (process.argv[1]?.endsWith('chat.js')) {
   assert.ok(intel.min <= intel.median && intel.median <= intel.max, '최저 <= 중앙 <= 최고')
   assert.ok(intel.rank >= 1 && intel.rank <= intel.count, 'rank는 1..count 범위')
   assert.equal(intel.discountPct, Math.round((1 - target.price / intel.median) * 100))
+
   const lonely = CATALOG.find((p) => (GROUPS.get(p.modelGroup) || []).length < MIN_PEERS)
   if (lonely) assert.equal(priceIntel(lonely), null, '비교군이 부족하면 시세를 만들지 않는다')
+
+  // 편차가 큰 그룹은 중앙값을 '시세'로 주장하면 안 된다.
+  for (const p of CATALOG) {
+    const i = priceIntel(p)
+    if (i) assert.equal(i.medianReliable, i.max / i.min <= MAX_SPREAD, 'medianReliable은 편차 기준과 일치')
+  }
+  const wide = CATALOG.map(priceIntel).find((i) => i && !i.medianReliable)
+  assert.ok(wide, '편차 큰 그룹이 실제로 존재해야 이 방어 로직이 의미가 있다')
+
+  const withIntel = CATALOG.filter((p) => priceIntel(p))
+  const reliable = withIntel.filter((p) => priceIntel(p).medianReliable)
   console.log(
     `✓ priceIntel OK — ${target.brand} ${target.category} ${won(target.price)}원 / ` +
-      `${intel.basis} 매물 ${intel.count}건 중 ${intel.rank}위, 시세 ${won(intel.median)}원 대비 ${intel.discountPct}%`
+      `${intel.basis} 매물 ${intel.count}건 중 ${intel.rank}위, 시세 ${won(intel.median)}원 대비 ${intel.discountPct}%\n` +
+      `  비교군 확보 ${withIntel.length}건 / 그중 시세(%) 주장 가능 ${reliable.length}건 ` +
+      `— 나머지는 순위·가격대만 노출`
   )
 }

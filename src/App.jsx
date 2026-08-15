@@ -12,6 +12,7 @@ const won = (n) => `${n.toLocaleString('ko-KR')}원`
 function PriceIntel({ intel, price }) {
   const [open, setOpen] = useState(false)
   const cheaper = intel.discountPct > 0
+  const group = intel.isModelLevel ? '같은 모델' : '같은 브랜드·종류'
   // 최저~최고 구간에서 현재 가격의 위치(%)
   const span = intel.max - intel.min
   const dotLeft = span > 0 ? ((price - intel.min) / span) * 100 : 50
@@ -19,8 +20,19 @@ function PriceIntel({ intel, price }) {
   return (
     <div className="intel">
       <div className="intel__headline">
-        {intel.isModelLevel ? '같은 모델' : '같은 브랜드·종류'} 매물 {intel.count}건 기준{' '}
-        {cheaper ? (
+        {group} 매물 {intel.count}건 기준{' '}
+        {/* 매물 편차가 크면 중앙값을 '시세'라고 부르지 않는다. 순위와 가격대만 사실로 전한다. */}
+        {!intel.medianReliable ? (
+          <>
+            <b className={intel.rank <= Math.ceil(intel.count / 2) ? '' : 'same'}>
+              {intel.rank}번째로 저렴
+            </b>
+          </>
+        ) : intel.discountPct === 0 ? (
+          <>
+            시세({won(intel.median)})와 <b className="same">같은 수준</b>
+          </>
+        ) : cheaper ? (
           <>
             시세({won(intel.median)})보다 <b>{intel.discountPct}% 저렴</b>
           </>
@@ -38,6 +50,13 @@ function PriceIntel({ intel, price }) {
         <span>최저 {won(intel.min)}</span>
         <span>최고 {won(intel.max)}</span>
       </div>
+
+      {!intel.medianReliable && (
+        <p className="intel__note">
+          이 그룹은 매물마다 모델·상태 차이가 커서 평균 시세를 계산하지 않았어요. 가격대만 참고해
+          주세요.
+        </p>
+      )}
 
       {intel.peers.length > 0 && (
         <>
@@ -78,7 +97,11 @@ function ProductCard({ product }) {
           <div className="card__tags">
             {product.category !== '기타' && <span className="tag">{product.category}</span>}
             {product.verified && <span className="tag tag--verified">정품 검수 가능</span>}
-            {intel?.rank === 1 && <span className="tag tag--deal">이 모델 최저가</span>}
+            {intel?.rank === 1 && (
+              <span className="tag tag--deal">
+                {intel.isModelLevel ? '이 모델 최저가' : '이 종류 중 최저가'}
+              </span>
+            )}
             {product.location && <span className="tag">{product.location.split(' ')[0]}</span>}
           </div>
         </div>
