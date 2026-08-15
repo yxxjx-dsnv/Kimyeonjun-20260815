@@ -47,6 +47,19 @@ check('대화 입력창 (결과를 좁히거나…)', src.includes('결과를 �
 check('리뷰 평점 표시', src.includes('card__rating'))
 check('상세 시트 ESC 닫기', src.includes("e.key === 'Escape'"))
 
+// 2.5) 인스턴트 검색 (Netflix/네이버식) 단위 검증
+const { buildIndex, instantSearch, toChoseong, toJamo } = await import(`${root}/src/instant.js`)
+const { default: cat } = await import(`${root}/api/_catalog.js`)
+const idx = buildIndex(cat)
+const r샤 = instantSearch(idx, '샤')
+check("'샤' 한 글자 → 샤넬 즉시", r샤.products.length > 0 && r샤.products.every((p) => p.brand === '샤넬'), r샤.suggestions.join('/'))
+const r초성 = instantSearch(idx, 'ㅅㅋㄹ')
+check("초성 'ㅅㅋㄹ' → 선크림", r초성.products.length > 0 && r초성.products.some((p) => p.category === '선크림'))
+const r자모 = instantSearch(idx, '무신')
+check("'무신' → 무신사 판매 상품", r자모.products.length >= 0 && instantSearch(idx, '물').products.some((p) => p.category === '물티슈'))
+check('자모 유틸', toChoseong('샤넬 가방') === 'ㅅㄴㄱㅂ' && toJamo('샤').startsWith('ㅅㅑ'))
+check('인스턴트 패널 연결', src.includes('InstantPanel') && src.includes('instantSearch'))
+
 // 3) /api/catalog 핸들러
 const { default: catalogHandler } = await import(`${root}/api/catalog.js`)
 const r = {}; r.status = (c) => ((r.code = c), r); r.json = (b) => ((r.body = b), r); r.setHeader = () => {}

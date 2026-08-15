@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useMemo } from 'react'
+import { buildIndex, instantSearch } from './instant.js'
 
 /* 홈 2×2 선택지 — 탭하면 즉시 실행 (실제 쇼포트 동작과 동일) */
 const won = (n) => `${n.toLocaleString('ko-KR')}원`
@@ -320,8 +321,43 @@ function AgentTurn({ turn, favs, toggleFav, onCompare }) {
   )
 }
 
+/* ---------- 인스턴트 검색 패널 (Netflix/네이버식 — 타이핑 즉시) ---------- */
+function InstantPanel({ index, query, onPick, onAsk }) {
+  const { products, suggestions } = useMemo(
+    () => (index && query.trim() ? instantSearch(index, query.trim(), 5) : { products: [], suggestions: [] }),
+    [index, query]
+  )
+  if (!query.trim() || (products.length === 0 && suggestions.length === 0)) return null
+  return (
+    <div className="instant">
+      {suggestions.length > 0 && (
+        <div className="instant__sugs">
+          {suggestions.map((sg) => (
+            <button key={sg} onClick={() => onAsk(sg)}>🔍 {sg}</button>
+          ))}
+        </div>
+      )}
+      <ul className="instant__list">
+        {products.map((p) => (
+          <li key={p.id}>
+            <button onClick={() => onPick(p)}>
+              {p.image ? <img src={p.image} alt="" loading="lazy" /> : <span className="instant__noimg">{p.brand.slice(0, 1)}</span>}
+              <span className="instant__meta">
+                <em>{p.brand} · {p.seller}</em>
+                <span>{p.name}</span>
+              </span>
+              <b>{won(p.price)}</b>
+            </button>
+          </li>
+        ))}
+      </ul>
+      <p className="instant__hint">상품을 탭하면 가격 비교, 제안을 탭하면 AI 검색으로 이어져요</p>
+    </div>
+  )
+}
+
 /* ---------- AI 찾기 (홈 + 대화) ---------- */
-function ChatView({ favs, toggleFav, onCompare, turns, setTurns, goDeals }) {
+function ChatView({ favs, toggleFav, onCompare, turns, setTurns, goDeals, index }) {
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
@@ -427,6 +463,7 @@ function ChatView({ favs, toggleFav, onCompare, turns, setTurns, goDeals }) {
             </button>
           </div>
         </div>
+        <InstantPanel index={index} query={input} onPick={onCompare} onAsk={send} />
         {error && <div className="errrow">{error.message}</div>}
 
         <p className="home__label">원하는 질문을 선택해보세요</p>
@@ -484,6 +521,9 @@ function ChatView({ favs, toggleFav, onCompare, turns, setTurns, goDeals }) {
         <div ref={bottomRef} />
       </main>
 
+      <div className="composer-wrap">
+        <InstantPanel index={index} query={input} onPick={onCompare} onAsk={send} />
+      </div>
       <div className="composer">
         <PhotoButton className="camtile camtile--sm" onQuery={send} onError={(m) => setError({ message: m, retry: null })} />
         <textarea
@@ -855,7 +895,7 @@ export default function App() {
 
   useEffect(() => {
     if (catalog.loaded || catalog.loading || catalog.error) return
-    if (view === 'chat') return
+    // 인스턴트 검색이 홈에서도 필요하므로 첫 진입 시 바로 프리페치한다
     setCatalog((c) => ({ ...c, loading: true }))
     fetch('/api/catalog')
       .then((r) => { if (!r.ok) throw new Error(); return r.json() })
@@ -864,6 +904,7 @@ export default function App() {
   }, [view, catalog.loaded, catalog.loading, catalog.error])
 
   const retryCatalog = () => setCatalog({ products: [], loading: false, error: null, loaded: false })
+  const index = useMemo(() => (catalog.products.length ? buildIndex(catalog.products) : null), [catalog.products])
   const toggleFav = (id) => setFavs((f) => (f.includes(id) ? f.filter((x) => x !== id) : [...f, id]))
 
   useEffect(() => {
@@ -903,6 +944,7 @@ export default function App() {
             turns={turns}
             setTurns={setTurns}
             goDeals={() => setView('deals')}
+            index={index}
           />
         )}
         {view === 'deals' && (

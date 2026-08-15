@@ -507,6 +507,46 @@ button.iconbtn:hover { background: var(--page); }
 .range__scale { display: flex; justify-content: space-between; font-size: 12.5px; color: var(--faint); }
 .range__note { margin: 6px 0 0; font-size: 13px; line-height: 1.5; color: var(--faint); word-break: keep-all; }
 
+/* ---------- 인스턴트 검색 패널 ---------- */
+.instant {
+  margin: 10px 0 4px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--card);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+  animation: rise 0.15s ease both;
+}
+.instant__sugs { display: flex; gap: 6px; flex-wrap: wrap; padding: 10px 12px 4px; }
+.instant__sugs button {
+  padding: 7px 12px;
+  border-radius: 999px;
+  background: var(--page);
+  font-size: 14px; font-weight: 600;
+}
+.instant__sugs button:hover { background: var(--orange-soft); color: var(--orange-deep); }
+.instant__list { margin: 0; padding: 6px 0 0; list-style: none; }
+.instant__list li button {
+  display: flex; align-items: center; gap: 11px;
+  width: 100%; padding: 8px 14px; text-align: left;
+}
+.instant__list li button:hover { background: var(--page); }
+.instant__list img, .instant__noimg {
+  width: 42px; height: 42px; border-radius: 9px; object-fit: cover; background: var(--page); flex-shrink: 0;
+}
+.instant__noimg { display: grid; place-items: center; font-weight: 800; color: var(--faint); }
+.instant__meta { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.instant__meta em { font-style: normal; font-size: 11.5px; font-weight: 700; color: var(--sub); }
+.instant__meta > span {
+  font-size: 14px; line-height: 1.35;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.instant__list b { font-size: 14.5px; font-weight: 800; white-space: nowrap; }
+.instant__hint { margin: 6px 0 0; padding: 0 14px 10px; font-size: 11.5px; color: var(--faint); }
+
+.composer-wrap { padding: 0 14px; }
+.composer-wrap .instant { margin: 0 0 8px; }
+
 /* ---------- 역대급 최저가 (나침반 뷰) ---------- */
 .dtabs { display: flex; border-bottom: 1.5px solid var(--line); flex-shrink: 0; }
 .dtabs button {
