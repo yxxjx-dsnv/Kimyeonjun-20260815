@@ -93,7 +93,6 @@ button:focus-visible, a:focus-visible, textarea:focus-visible { outline: 2.5px s
 button.iconbtn:hover { background: var(--page); }
 .iconbtn.is-on { color: var(--orange-deep); }
 .iconbtn--heart { color: #ff2d55; }
-.iconbtn--heart.is-on { color: var(--orange-deep); }
 
 /* ---------- 홈 (쇼포트 첫 화면) ---------- */
 .home {
@@ -146,7 +145,14 @@ button.iconbtn:hover { background: var(--page); }
 .hero textarea:focus { outline: none; }
 .hero textarea::placeholder { color: var(--faint); }
 .hero__bar { display: flex; justify-content: space-between; align-items: center; margin-top: 6px; }
-.hero__cam { display: grid; place-items: center; width: 38px; height: 38px; color: var(--sub); }
+.camtile {
+  display: grid; place-items: center;
+  width: 38px; height: 38px;
+  border: 1.2px solid var(--line);
+  border-radius: 10px;
+  color: var(--sub);
+}
+.camtile--sm { width: 40px; height: 44px; border: 0; flex-shrink: 0; }
 
 .sendbtn {
   width: 42px; height: 42px;
@@ -183,6 +189,24 @@ button.iconbtn:hover { background: var(--page); }
 }
 .gcard__label { font-size: 15.5px; line-height: 1.4; color: var(--ink); }
 .gcard__label b { font-weight: 800; }
+
+.peek__caption {
+  margin: 24px 0 8px;
+  font-size: 13.5px; color: var(--faint);
+}
+.peek {
+  display: flex; align-items: center; justify-content: center; gap: 7px;
+  width: 100%;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--card);
+  font-size: 15.5px;
+  box-shadow: var(--shadow);
+}
+.peek:hover { border-color: var(--ink); }
+.peek__icon { display: grid; place-items: center; color: var(--ink); }
+.peek b { font-weight: 800; }
 
 .home__note {
   margin: 22px 0 0;
@@ -225,6 +249,7 @@ button.iconbtn:hover { background: var(--page); }
   font-size: 14px; font-weight: 700; color: var(--ink);
 }
 .statusrow__check { color: var(--orange); font-weight: 800; letter-spacing: -0.12em; }
+.statusrow__time { font-size: 13px; font-weight: 600; color: var(--faint); }
 .statusrow__chip {
   font-size: 12.5px; font-weight: 600;
   padding: 3px 10px;
@@ -267,6 +292,54 @@ button.iconbtn:hover { background: var(--page); }
   font-weight: 700;
 }
 
+/* ---------- 추천/비교표 전환 탭 ---------- */
+.viewtabs {
+  display: flex;
+  border-bottom: 1.5px solid var(--line);
+}
+.viewtabs button {
+  flex: 1;
+  padding: 10px 0 11px;
+  font-size: 15.5px; font-weight: 700; color: var(--faint);
+  border-bottom: 2.5px solid transparent;
+  margin-bottom: -1.5px;
+}
+.viewtabs button.is-on { color: var(--ink); border-bottom-color: var(--ink); }
+
+/* ---------- 비교표 ---------- */
+.ctable-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--card);
+}
+.ctable { border-collapse: collapse; width: 100%; min-width: 330px; font-size: 13.5px; }
+.ctable th, .ctable td {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  vertical-align: top;
+}
+.ctable thead th { border-bottom: 1.5px solid var(--ink); }
+.ctable tbody tr:last-child td { border-bottom: 0; }
+.ctable td:first-child {
+  font-weight: 700; color: var(--sub); white-space: nowrap; width: 1%;
+}
+.ctable th img {
+  display: block;
+  width: 54px; height: 54px;
+  object-fit: cover; border-radius: 9px;
+  margin: 5px 0;
+}
+.ctable__rank {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--ink); color: #fff;
+  font-size: 11.5px; font-weight: 800;
+}
+.ctable__name { display: block; font-weight: 600; line-height: 1.35; word-break: keep-all; }
+
 /* ---------- 질문 카드 (쇼포트 설문 카드) ---------- */
 .qcard {
   background: var(--card);
@@ -287,7 +360,16 @@ button.iconbtn:hover { background: var(--page); }
   background: var(--card);
 }
 .qcard__opts button:hover { background: var(--lav); border-color: var(--lav-line); }
-.qcard__opts button:disabled { opacity: 0.5; cursor: not-allowed; }
+.qcard__opts button.is-on { background: var(--lav); border-color: var(--lav-line); font-weight: 700; }
+.qcard__next {
+  display: block; width: 100%;
+  margin-top: 14px;
+  padding: 14px 0;
+  border-radius: 14px;
+  background: var(--ink); color: #fff;
+  font-weight: 800; font-size: 16px;
+}
+.qcard__next:disabled { background: #cfd3d8; cursor: not-allowed; }
 
 /* ---------- 하단 입력 (대화 중) ---------- */
 .composer {
@@ -450,6 +532,17 @@ button.iconbtn:hover { background: var(--page); }
   color: var(--hot); margin-right: 5px; vertical-align: 1px;
 }
 
+.card__compare {
+  display: block;
+  width: calc(100% - 28px);
+  margin: 8px 14px 0;
+  padding: 12px 0;
+  border-radius: 12px;
+  background: var(--page);
+  font-size: 15px; font-weight: 700; color: var(--ink);
+}
+.card__compare:hover { background: var(--lav); }
+
 .card__actions {
   display: flex; gap: 9px;
   padding: 12px 14px 14px;
@@ -561,10 +654,91 @@ button.iconbtn:hover { background: var(--page); }
 }
 @keyframes sheetup { from { transform: translateY(40px); opacity: 0.4; } }
 @media (prefers-reduced-motion: reduce) { .sheet__panel { animation: none; } }
+.csheet__top { display: flex; margin-bottom: 2px; }
+.csheet__product {
+  display: flex; gap: 12px; align-items: flex-start;
+  padding: 4px 6px 14px;
+  border-bottom: 1px solid var(--line);
+}
+.csheet__product img {
+  width: 64px; height: 64px; border-radius: 10px; object-fit: cover; background: var(--page);
+}
+.csheet__brand { font-size: 12.5px; font-weight: 700; color: var(--sub); }
+.csheet__name { font-size: 15.5px; font-weight: 600; line-height: 1.4; margin: 1px 0 7px; word-break: keep-all; }
+.csheet__pricehead {
+  display: flex; justify-content: space-between; align-items: flex-end;
+  padding: 14px 6px 2px;
+}
+.csheet__label { font-size: 13.5px; color: var(--sub); }
+.csheet__price { font-size: 28px; font-weight: 800; letter-spacing: -0.02em; }
+.csheet__count { font-size: 12.5px; color: var(--faint); padding-bottom: 6px; }
+.csheet__chips { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 6px 2px; }
+.csheet__chip {
+  display: inline-block;
+  padding: 5px 12px;
+  border-radius: 999px;
+  background: var(--orange-soft); color: var(--orange-deep);
+  font-size: 13.5px; font-weight: 700;
+}
+.csheet__chip--save { background: #e8f7ee; color: #15803d; }
+.csheet__sechead {
+  display: flex; justify-content: space-between; align-items: baseline;
+  padding: 18px 6px 8px;
+}
+.csheet__sechead b { font-size: 16px; font-weight: 800; }
+.csheet__sechead span { font-size: 12.5px; color: var(--faint); }
+.csheet__rows { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 8px; }
+.csheet__rows li {
+  display: flex; justify-content: space-between; align-items: center; gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--card);
+}
+.csheet__rows li.is-self { border-color: var(--ink); }
+.csheet__rows li a {
+  display: flex; align-items: center; gap: 10px; min-width: 0;
+  color: var(--ink); text-decoration: none; font-size: 15px; font-weight: 600;
+}
+.csheet__rows li b { font-size: 16px; font-weight: 800; white-space: nowrap; }
+.csheet__rowname em { font-style: normal; font-size: 12.5px; color: var(--faint); font-weight: 500; }
+.csheet__low {
+  font-style: normal;
+  margin-left: 7px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #fdecec; color: var(--hot);
+  font-size: 11.5px; font-weight: 800;
+}
+.sellerdot {
+  display: grid; place-items: center;
+  width: 30px; height: 30px; flex-shrink: 0;
+  border-radius: 50%;
+  color: #fff; font-size: 13px; font-weight: 800;
+}
+.csheet__actions {
+  display: flex; gap: 9px;
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+.csheet__actions .btn--ghost.is-fav { border-color: var(--orange); color: var(--orange-deep); }
+
 .sheet__close {
   display: block; margin: 0 0 10px auto;
   padding: 8px 14px; border-radius: 999px;
   background: var(--page); font-weight: 700; font-size: 14.5px; color: var(--sub);
 }
 .sheet__panel .card { border: 0; box-shadow: none; }
-.sheet__panel .card__actions { padding-bottom: 4px; }
+.sheet__panel .card__compare {
+  display: block;
+  width: calc(100% - 28px);
+  margin: 8px 14px 0;
+  padding: 12px 0;
+  border-radius: 12px;
+  background: var(--page);
+  font-size: 15px; font-weight: 700; color: var(--ink);
+}
+.card__compare:hover { background: var(--lav); }
+
+.card__actions { padding-bottom: 4px; }

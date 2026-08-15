@@ -27,10 +27,10 @@ check('2×2 선택지 4개', (await page.locator('.gcard').count()) === 4)
 await page.screenshot({ path: `${IMG}/shot_home.png` })
 
 /* 2) 선택지 탭 → 입력 채움 → 전송 → 카드 대기 (절약 계산서 나오는 질의) */
-await page.locator('.gcard').nth(2).click() // 새상품 대비 절약액 확인
-check('선택지 탭 → 입력 채움', (await page.locator('.hero textarea').inputValue()).includes('루이비통'))
-await page.locator('.hero .sendbtn').click()
-await page.waitForSelector('.card', { timeout: 60000 })
+await page.locator('.gcard').nth(2).click() // 새상품 대비 절약액 확인 — 탭 즉시 전송
+await page.waitForSelector('.upill', { timeout: 10000 })
+check('선택지 탭 → 즉시 전송', (await page.locator('.upill').innerText()).includes('루이비통'))
+await page.waitForSelector('.card', { timeout: 90000 })
 check('상품 카드 렌더', (await page.locator('.card').count()) >= 1)
 check('유저 발화 pill', (await page.locator('.upill').count()) === 1)
 check('상태행 (AI 기준 정리 완료)', await page.locator('.statusrow').first().innerText().then((t) => t.includes('정리 완료')))
@@ -50,13 +50,29 @@ if (await ledgerCard.count()) {
   check('절약 계산서 표시', false, '이번 응답에는 새상품 비교 매물이 없음')
 }
 
-/* 4) 판매처 가격 비교 펼침 */
-const peerToggle = page.locator('.peers__toggle').first()
-if (await peerToggle.count()) {
-  await peerToggle.click()
-  check('판매처 가격 비교 리스트', (await page.locator('.peers li').count()) >= 1)
+/* 4) 가격 비교 시트 (판매처 별 판매가) */
+const cmpBtn = page.locator('.card__compare').first()
+if (await cmpBtn.count()) {
+  await cmpBtn.click()
+  await page.waitForSelector('.csheet__rows li', { timeout: 15000 })
+  check('가격 비교 시트 — 판매처 별 판매가', (await page.locator('.csheet__rows li').count()) >= 2)
+  await page.waitForTimeout(500)
+  await page.screenshot({ path: `${IMG}/shot_compare.png` })
+  await page.keyboard.press('Escape')
+  await page.waitForTimeout(300)
 } else {
-  check('판매처 가격 비교 리스트', false, '비교군 없음')
+  check('가격 비교 시트 — 판매처 별 판매가', false, '비교군 없음')
+}
+
+/* 4.5) 비교표로 보기 탭 */
+if (await page.locator('.viewtabs').count()) {
+  await page.locator('.viewtabs button').nth(1).click()
+  await page.waitForTimeout(400)
+  check('비교표로 보기', (await page.locator('.ctable').count()) === 1)
+  await page.screenshot({ path: `${IMG}/shot_table.png` })
+  await page.locator('.viewtabs button').nth(0).click()
+} else {
+  console.log('  (후보 1건이라 비교표 탭 없음)')
 }
 
 /* 5) 찜 동작 (localStorage 영속) */
@@ -75,8 +91,8 @@ await page.screenshot({ path: `${IMG}/shot_browse.png` })
 
 /* 7) 상세 시트 */
 await page.locator('.mini__hit').first().click()
-await page.waitForSelector('.sheet .card')
-check('상세 시트 열림', true)
+await page.waitForSelector('.sheet .csheet__rows, .sheet .csheet__product')
+check('상세 시트(가격 비교) 열림', true)
 await page.keyboard.press('Escape')
 await page.waitForTimeout(300)
 check('ESC로 닫힘', (await page.locator('.sheet').count()) === 0)
@@ -96,8 +112,9 @@ console.log(`  (질문 카드 ${hasQcard ? '표시됨 — 선택지 탭 테스�
 if (hasQcard) {
   const before = await page.locator('.upill').count()
   await page.locator('.qcard__opts button').first().click()
+  await page.locator('.qcard__next').click()
   await page.waitForFunction((n) => document.querySelectorAll('.upill').length > n, before, { timeout: 60000 })
-  check('질문 카드 선택지 탭 → 전송', true)
+  check('질문 카드 선택 → 선택 완료 → 전송', true)
 }
 await page.screenshot({ path: `${IMG}/shot_beauty.png` })
 

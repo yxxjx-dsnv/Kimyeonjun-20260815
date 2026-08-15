@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useMemo } from 'react'
 
-/* 홈 2×2 선택지 — 탭하면 예시 문장이 입력창에 들어간다 */
+/* 홈 2×2 선택지 — 탭하면 즉시 검색 실행 (실제 쇼포트 동작과 동일) */
 const HOME_CARDS = [
   { icon: '🔍', tint: '#eef4ff', label: ['이름은 몰라도', '서술로 찾기'], text: '디올 지갑인데 베이지 바탕에 남색 패턴 있는 얇은 카드지갑 찾아줘' },
   { icon: '🧴', tint: '#eafaf1', label: ['뷰티·생활', '최저가 찾기'], text: '모공에 좋은 수분크림, 판매처별로 제일 싼 거 찾아줘' },
@@ -10,6 +10,9 @@ const HOME_CARDS = [
 
 const won = (n) => `${n.toLocaleString('ko-KR')}원`
 const FAV_KEY = 'ggij:favs'
+const SELLER_TINT = {
+  번개장터: '#ef4444', '다나와 최저가': '#16a34a', '29CM': '#111827', 무신사: '#2563eb', 컬리: '#7c3aed',
+}
 
 /* ---------- 아이콘 ---------- */
 const svg = (path, extra = null) => (
@@ -22,6 +25,9 @@ const I = {
   menu: svg(<path d="M4 6.5h16M4 12h16M4 17.5h16" />),
   home: svg(<path d="M4 10.8 12 4l8 6.8V20a1 1 0 0 1-1 1h-5v-6h-4v6H5a1 1 0 0 1-1-1Z" />),
   compass: svg(<circle cx="12" cy="12" r="9" />, <path d="m15.5 8.5-2.2 5-5 2.2 2.2-5z" />),
+  back: svg(<path d="M14.5 5.5 8 12l6.5 6.5" />),
+  bell: svg(<path d="M6 9.5a6 6 0 0 1 12 0c0 4.2 1.6 5.5 1.6 5.5H4.4S6 13.7 6 9.5Z" />, <path d="M10.2 18.5a2 2 0 0 0 3.6 0" />),
+  scan: svg(<path d="M4 8V5.5A1.5 1.5 0 0 1 5.5 4H8M16 4h2.5A1.5 1.5 0 0 1 20 5.5V8M20 16v2.5a1.5 1.5 0 0 1-1.5 1.5H16M8 20H5.5A1.5 1.5 0 0 1 4 18.5V16" />, <path d="M4 12h16" />),
   heart: (filled) => (
     <svg viewBox="0 0 24 24" width="22" height="22" fill={filled ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="1.9" strokeLinejoin="round" aria-hidden="true">
       <path d="M12 20.3S4 15 4 9.6A4.4 4.4 0 0 1 8.4 5c1.5 0 2.9.8 3.6 2A4.2 4.2 0 0 1 15.6 5 4.4 4.4 0 0 1 20 9.6c0 5.4-8 10.7-8 10.7Z" />
@@ -102,37 +108,8 @@ function MarketRange({ intel, price }) {
   )
 }
 
-/* ---------- 판매처 가격 비교 ---------- */
-function PeerList({ intel }) {
-  const [open, setOpen] = useState(false)
-  if (!intel?.peers?.length) return null
-  return (
-    <div className="peers">
-      <button className="peers__toggle" onClick={() => setOpen(!open)} aria-expanded={open}>
-        {open ? '가격 비교 접기' : `판매처 가격 비교 (${intel.peers.length})`}
-      </button>
-      {open && (
-        <ul>
-          {intel.peers.map((p, idx) => (
-            <li key={p.id}>
-              <a href={p.url} target="_blank" rel="noreferrer">
-                <span className={`seller ${p.condition === 'new' ? 'seller--new' : ''}`}>{p.seller}</span>
-                <span className="peers__name">{p.name}</span>
-              </a>
-              <b>
-                {idx === 0 && <i className="lowest">최저</i>}
-                {won(p.price)}
-              </b>
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
-  )
-}
-
-/* ---------- 상품 카드 ---------- */
-function ProductCard({ product, fav, onFav, rank }) {
+/* ---------- 상품 카드 (결과 카드) ---------- */
+function ProductCard({ product, fav, onFav, rank, onCompare }) {
   const intel = product.priceIntel
   return (
     <article className="card">
@@ -181,7 +158,12 @@ function ProductCard({ product, fav, onFav, rank }) {
       {intel && <div className="ailabel">AI 가격 분석</div>}
       <SavingsLedger product={product} intel={intel} />
       <MarketRange intel={intel || {}} price={product.price} />
-      <PeerList intel={intel} />
+
+      {intel?.peers?.length > 0 && (
+        <button className="card__compare" onClick={() => onCompare(product)}>
+          가격 비교·판매처 보기 ({intel.peers.length + 1})
+        </button>
+      )}
 
       <div className="card__actions">
         <a className="btn btn--ghost" href={product.url} target="_blank" rel="noreferrer">
@@ -195,8 +177,129 @@ function ProductCard({ product, fav, onFav, rank }) {
   )
 }
 
+/* ---------- 비교표 (쇼포트 '비교표로 보기') ---------- */
+function CompareTable({ products }) {
+  const rows = [
+    ['가격', (p) => won(p.price)],
+    ['상태', (p) => (p.condition === 'new' ? '새상품' : '중고')],
+    ['판매처', (p) => p.seller],
+    ['시세 대비', (p) => {
+      const s = p.priceIntel?.stats
+      if (!s) return '—'
+      return s.medianReliable
+        ? s.discountPct > 0
+          ? `${s.discountPct}% 저렴`
+          : s.discountPct === 0
+            ? '시세 수준'
+            : `${Math.abs(s.discountPct)}% 비쌈`
+        : `${p.priceIntel.count}건 중 ${s.rank}위`
+    }],
+    ['새상품 대비', (p) =>
+      p.priceIntel?.vsNewPct > 0 ? `${won(p.priceIntel.newBest.price - p.price)} 절약` : '—'],
+    ['평점', (p) => (p.rating ? `★ ${p.rating.toFixed(1)}` : '—')],
+    ['정품 검수', (p) => (p.verified ? '가능' : '—')],
+  ]
+  return (
+    <div className="ctable-wrap">
+      <table className="ctable">
+        <thead>
+          <tr>
+            <th />
+            {products.map((p, i) => (
+              <th key={p.id}>
+                <span className="ctable__rank">{i + 1}위</span>
+                {p.image && <img src={p.image} alt="" loading="lazy" />}
+                <span className="ctable__name">{p.name.slice(0, 22)}</span>
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map(([label, fn]) => (
+            <tr key={label}>
+              <td>{label}</td>
+              {products.map((p) => (
+                <td key={p.id}>{fn(p)}</td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+/* ---------- 질문 카드 (쇼포트 설문 카드: 선택 → 선택 완료) ---------- */
+function QuestionCard({ turn }) {
+  const [picked, setPicked] = useState([])
+  const opts = turn.followUpOptions || []
+  const toggle = (o) =>
+    setPicked((prev) => (prev.includes(o) ? prev.filter((x) => x !== o) : [...prev, o]))
+  if (opts.length === 0) return (
+    <div className="qcard">
+      <div className="qcard__title">{turn.followUpQuestion}</div>
+      <p className="qcard__sub">아래 입력창에 편하게 답해주세요.</p>
+    </div>
+  )
+  return (
+    <div className="qcard">
+      <div className="qcard__title">{turn.followUpQuestion}</div>
+      <p className="qcard__sub">해당하는 것을 골라주세요. 직접 입력하셔도 돼요.</p>
+      <div className="qcard__opts">
+        {opts.map((o) => (
+          <button key={o} className={picked.includes(o) ? 'is-on' : ''} onClick={() => toggle(o)}>
+            {o}
+          </button>
+        ))}
+      </div>
+      <button
+        className="qcard__next"
+        disabled={picked.length === 0}
+        onClick={() => turn.onAnswer(picked.join(', '))}
+      >
+        {picked.length > 0 ? '선택 완료' : '선택해주세요'}
+      </button>
+    </div>
+  )
+}
+
+/* ---------- 에이전트 응답 턴 ---------- */
+function AgentTurn({ turn, favs, toggleFav, onCompare }) {
+  const [mode, setMode] = useState('cards')
+  const many = (turn.products?.length || 0) >= 2
+  return (
+    <div className="aturn">
+      <div className="statusrow">
+        <span className="statusrow__check" aria-hidden="true">✓✓</span>
+        결과 정리 완료
+        {turn.elapsed && <span className="statusrow__time">{turn.elapsed}s</span>}
+        {turn.catalogSize && <span className="statusrow__chip">5개 쇼핑몰 · {turn.catalogSize}개 상품</span>}
+      </div>
+      <p className="atext">{turn.content}</p>
+
+      {many && (
+        <div className="viewtabs" role="tablist">
+          <button className={mode === 'cards' ? 'is-on' : ''} onClick={() => setMode('cards')}>추천 상품 보기</button>
+          <button className={mode === 'table' ? 'is-on' : ''} onClick={() => setMode('table')}>비교표로 보기</button>
+        </div>
+      )}
+
+      {turn.products?.length > 0 && mode === 'cards' && (
+        <div className="cards">
+          {turn.products.map((p, pi) => (
+            <ProductCard key={p.id} product={p} fav={favs.includes(p.id)} onFav={toggleFav} rank={pi + 1} onCompare={onCompare} />
+          ))}
+        </div>
+      )}
+      {turn.products?.length > 0 && mode === 'table' && <CompareTable products={turn.products} />}
+
+      {turn.followUpQuestion && <QuestionCard turn={turn} />}
+    </div>
+  )
+}
+
 /* ---------- AI 찾기 (홈 + 대화) ---------- */
-function ChatView({ favs, toggleFav }) {
+function ChatView({ favs, toggleFav, onCompare }) {
   const [turns, setTurns] = useState([])
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
@@ -219,6 +322,7 @@ function ChatView({ favs, toggleFav }) {
     setInput('')
     setError(null)
     setLoading(true)
+    const t0 = performance.now()
     try {
       const res = await fetch('/api/chat', {
         method: 'POST',
@@ -238,6 +342,8 @@ function ChatView({ favs, toggleFav }) {
           followUpQuestion: data.followUpQuestion,
           followUpOptions: data.followUpOptions || [],
           catalogSize: data.catalogSize,
+          elapsed: ((performance.now() - t0) / 1000).toFixed(1),
+          onAnswer: send,
         },
       ])
     } catch (err) {
@@ -245,6 +351,15 @@ function ChatView({ favs, toggleFav }) {
       setTurns(next)
     } finally {
       setLoading(false)
+    }
+  }
+
+  const onKey = (e) => {
+    // 한글 IME 조합 확정 Enter는 전송이 아니다 — 이 가드가 없으면 타이핑 중 반토막 질의가 전송된다
+    if (e.nativeEvent.isComposing) return
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault()
+      send(input)
     }
   }
 
@@ -273,15 +388,11 @@ function ChatView({ favs, toggleFav }) {
             value={input}
             placeholder="샤넬 가방인데 검정 누빔에 금색 체인 달린 거 찾아줘"
             onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => {
-              // 한글 IME 조합 확정 Enter는 전송이 아니다 — 이 가드가 없으면 타이핑 중 반토막 질의가 전송된다
-              if (e.nativeEvent.isComposing) return
-              if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(input) }
-            }}
+            onKeyDown={onKey}
             aria-label="찾는 상품 설명"
           />
           <div className="hero__bar">
-            <span className="hero__cam" aria-hidden="true">{I.camera}</span>
+            <span className="camtile" aria-hidden="true">{I.camera}</span>
             <button className="sendbtn" onClick={() => send(input)} disabled={!input.trim()} aria-label="전송">
               {I.send}
             </button>
@@ -302,6 +413,14 @@ function ChatView({ favs, toggleFav }) {
           ))}
         </div>
 
+        <p className="peek__caption">
+          <span aria-hidden="true">💰</span> 시세가 궁금한 상품이 있다면
+        </p>
+        <button className="peek" onClick={() => send('디올 오블리크 카드지갑 지금 시세 어때?')}>
+          <span className="peek__icon" aria-hidden="true">{I.scan}</span>
+          이&nbsp;<b>명품</b>&nbsp;상품, 시세보다 싼 걸까?
+        </button>
+
         <p className="home__note">
           레브잇 PMF 과제 프로토타입 — 쇼포트의 UX 문법을 차용한 데모이며 실제 쇼포트 서비스가
           아닙니다.
@@ -310,7 +429,7 @@ function ChatView({ favs, toggleFav }) {
     )
   }
 
-  /* ----- 대화 ----- */
+  /* ----- 대화 (결과 화면) ----- */
   return (
     <>
       <main className="thread" aria-live="polite">
@@ -320,43 +439,14 @@ function ChatView({ favs, toggleFav }) {
               <span className="upill">{turn.content}</span>
             </div>
           ) : (
-            <div key={i} className="aturn">
-              <div className="statusrow">
-                <span className="statusrow__check" aria-hidden="true">✓✓</span>
-                쇼포트 AI 기준 정리 완료
-                {turn.catalogSize && <span className="statusrow__chip">5개 판매처 · {turn.catalogSize}개 상품</span>}
-              </div>
-              <p className="atext">{turn.content}</p>
-
-              {turn.products?.length > 0 && (
-                <div className="cards">
-                  {turn.products.map((p, pi) => (
-                    <ProductCard key={p.id} product={p} fav={favs.includes(p.id)} onFav={toggleFav} rank={pi + 1} />
-                  ))}
-                </div>
-              )}
-
-              {turn.followUpQuestion && (
-                <div className="qcard">
-                  <div className="qcard__title">{turn.followUpQuestion}</div>
-                  <p className="qcard__sub">아래에서 고르거나, 직접 입력하셔도 돼요.</p>
-                  {turn.followUpOptions?.length > 0 && (
-                    <div className="qcard__opts">
-                      {turn.followUpOptions.map((o) => (
-                        <button key={o} onClick={() => send(o)} disabled={loading}>{o}</button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
+            <AgentTurn key={i} turn={turn} favs={favs} toggleFav={toggleFav} onCompare={onCompare} />
           )
         )}
 
         {loading && (
           <div className="statusrow statusrow--busy" aria-label="답변 작성 중">
             <span className="spin" aria-hidden="true" />
-            5개 판매처에서 찾고 있어요…
+            5개 쇼핑몰에서 찾고 있어요…
           </div>
         )}
         {error && (
@@ -369,16 +459,13 @@ function ChatView({ favs, toggleFav }) {
       </main>
 
       <div className="composer">
-        <span className="composer__cam" aria-hidden="true">{I.camera}</span>
+        <span className="camtile camtile--sm" aria-hidden="true">{I.camera}</span>
         <textarea
           rows={1}
           value={input}
-          placeholder="메세지를 입력하세요"
+          placeholder="결과를 좁히거나 다른 상품을 찾아드려요"
           onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.nativeEvent.isComposing) return // 한글 IME 조합 확정 Enter 무시
-            if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(input) }
-          }}
+          onKeyDown={onKey}
           aria-label="메세지 입력"
         />
         <button className="sendbtn" onClick={() => send(input)} disabled={loading || !input.trim()} aria-label="전송">
@@ -485,6 +572,91 @@ function BrowseView({ catalog, favs, toggleFav, onOpen, savedOnly, onRetry }) {
   )
 }
 
+/* ---------- 가격 비교 시트 (쇼포트 '플랫폼 별 판매가' 화면) ---------- */
+function CompareSheet({ product, fav, onFav, onClose }) {
+  const intel = product.priceIntel
+  // 자기 자신 + 비교 매물을 가격순으로
+  const rows = [
+    { id: product.id, price: product.price, name: product.name, url: product.url, seller: product.seller, condition: product.condition, self: true },
+    ...(intel?.peers || []),
+  ].sort((a, b) => a.price - b.price)
+  const s = intel?.stats
+
+  return (
+    <div className="sheet" role="dialog" aria-modal="true" aria-label="가격 비교">
+      <button className="sheet__dim" onClick={onClose} aria-label="닫기" />
+      <div className="sheet__panel">
+        <div className="csheet__top">
+          <button className="iconbtn" onClick={onClose} aria-label="뒤로">{I.back}</button>
+        </div>
+
+        <div className="csheet__product">
+          {product.image && <img src={product.image} alt="" />}
+          <div>
+            <span className="csheet__brand">{product.brand}</span>
+            <div className="csheet__name">{product.name}</div>
+            <div className="card__tags">
+              <span className={`tag ${product.condition === 'new' ? 'tag--new' : ''}`}>
+                {product.condition === 'new' ? '새상품' : '중고'}
+              </span>
+              {product.category !== '기타' && <span className="tag">{product.category}</span>}
+            </div>
+          </div>
+        </div>
+
+        <div className="csheet__pricehead">
+          <div>
+            <div className="csheet__label">지금 이 상품</div>
+            <div className="csheet__price">{won(product.price)}</div>
+          </div>
+          {intel && <div className="csheet__count">{intel.count}개 매물 비교 중</div>}
+        </div>
+        <div className="csheet__chips">
+          {s?.medianReliable && s.discountPct > 0 && (
+            <span className="csheet__chip">🔥 시세보다 {s.discountPct}% 저렴해요</span>
+          )}
+          {intel?.vsNewPct > 0 && (
+            <span className="csheet__chip csheet__chip--save">
+              💰 새상품 대비 {won(intel.newBest.price - product.price)} 절약
+            </span>
+          )}
+        </div>
+
+        <div className="csheet__sechead">
+          <b>판매처 별 판매가</b>
+          <span>5개 쇼핑몰 수집 데이터 비교</span>
+        </div>
+        <ul className="csheet__rows">
+          {rows.map((r, i) => (
+            <li key={r.id} className={r.self ? 'is-self' : ''}>
+              <a href={r.url} target="_blank" rel="noreferrer">
+                <span className="sellerdot" style={{ background: SELLER_TINT[r.seller] || '#6b7280' }}>
+                  {r.seller.slice(0, 1)}
+                </span>
+                <span className="csheet__rowname">
+                  {r.seller}
+                  {r.self && <em> · 이 상품</em>}
+                  {i === 0 && <i className="csheet__low">최저가</i>}
+                </span>
+              </a>
+              <b>{won(r.price)}</b>
+            </li>
+          ))}
+        </ul>
+
+        <div className="csheet__actions">
+          <button className={`btn btn--ghost ${fav ? 'is-fav' : ''}`} onClick={() => onFav(product.id)}>
+            {fav ? '추적 중 🔔' : '가격 추적하기'}
+          </button>
+          <a className="btn btn--solid" href={rows[0].url} target="_blank" rel="noreferrer">
+            최저가 구매하기
+          </a>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 /* ---------- 앱 ---------- */
 export default function App() {
   const [view, setView] = useState('chat')
@@ -525,19 +697,21 @@ export default function App() {
         <header className="appbar">
           <span className="iconbtn" aria-hidden="true">{I.menu}</span>
           <div className="appbar__nav">
-            <button className={`iconbtn ${view === 'chat' ? 'is-on' : ''}`} onClick={() => setView('chat')} aria-label="AI 찾기 홈">
-              {I.home}
-            </button>
+            {view !== 'chat' && (
+              <button className="iconbtn" onClick={() => setView('chat')} aria-label="AI 찾기 홈">
+                {I.home}
+              </button>
+            )}
             <button className={`iconbtn ${view === 'browse' ? 'is-on' : ''}`} onClick={() => setView('browse')} aria-label="최저가 탐색">
               {I.compass}
             </button>
-            <button className={`iconbtn iconbtn--heart ${view === 'saved' ? 'is-on' : ''}`} onClick={() => setView('saved')} aria-label="찜한 목록">
+            <button className="iconbtn iconbtn--heart" onClick={() => setView('saved')} aria-label="찜한 목록">
               {I.heart(true)}
             </button>
           </div>
         </header>
 
-        {view === 'chat' && <ChatView favs={favs} toggleFav={toggleFav} />}
+        {view === 'chat' && <ChatView favs={favs} toggleFav={toggleFav} onCompare={setSheet} />}
         {view === 'browse' && (
           <BrowseView catalog={catalog} favs={favs} toggleFav={toggleFav} onOpen={setSheet} savedOnly={false} onRetry={retryCatalog} />
         )}
@@ -546,13 +720,7 @@ export default function App() {
         )}
 
         {sheet && (
-          <div className="sheet" role="dialog" aria-modal="true" aria-label="상품 상세">
-            <button className="sheet__dim" onClick={() => setSheet(null)} aria-label="닫기" />
-            <div className="sheet__panel">
-              <button className="sheet__close" onClick={() => setSheet(null)}>닫기</button>
-              <ProductCard product={sheet} fav={favs.includes(sheet.id)} onFav={toggleFav} />
-            </div>
-          </div>
+          <CompareSheet product={sheet} fav={favs.includes(sheet.id)} onFav={toggleFav} onClose={() => setSheet(null)} />
         )}
       </div>
       <p className="colophon">
