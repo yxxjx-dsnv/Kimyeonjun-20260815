@@ -13,7 +13,7 @@
  *  - AI가 빈손이면 키워드 백스톱이 후보를 채움
  */
 import { CATALOG, byId, priceIntel, intelWithin } from './_intel.js'
-import { liveSearch, extractKeyword } from './_live.js'
+import { liveSearch, extractKeyword, cleanTokens } from './_live.js'
 
 const MODEL = 'gpt-4o-mini'
 const MAX_MESSAGES = 20
@@ -77,7 +77,7 @@ const wantsAlternative = (text) => /비슷한|대체|대신|말고|같은\s*느�
 const wantsExclusion = (text) => /말고|대신|대체/.test(text)
 
 /** AI가 빈손일 때의 결정론적 백스톱 — 브랜드/카테고리/색상 점수화 상위 3개. */
-function keywordFallback(text, pool) {
+function keywordFallback(text, pool, distinctive = []) {
   const brand = detectBrand(text)
   const t = flat(text)
   const catHit = CATEGORY_WORDS.find((c) => t.includes(flat(c)))
@@ -87,6 +87,8 @@ function keywordFallback(text, pool) {
   const scored = base.map((p) => {
     const hay = flat(`${p.rawTitle} ${p.tag} ${p.category}`)
     let score = p.live ? 1 : 0 // 라이브 결과는 검색어와 직접 매칭된 것이므로 가산
+    // 특징어(스네이크 등)가 제목에 있으면 강하게 가산
+    for (const w of distinctive) if (hay.includes(flat(w))) score += 4
     if (catHit && p.category === catHit) score += 2
     else if (t.includes('지갑') && p.category.includes('지갑')) score += 1
     else if ((t.includes('가방') || t.includes('백')) && ['숄더백', '토트백', '크로스백', '클러치', '백팩'].includes(p.category)) score += 1
@@ -189,15 +191,32 @@ export default async function handler(req, res) {
   // --- 1단계: 정적 카탈로그 검색 ---
   let pool = buildStaticPool(userText, budget)
 
-  // --- 2단계: 라이브 검색 (정적 결과가 빈약하면 실시간으로 쇼핑몰 검색) ---
+  // --- 2단계: 라이브 검색 ---
   const brands = detectBrands(userText)
-  const staticWeak = pool.length < 12 || (brands.length === 0 && pool.length >= 200)
+  // '특징어' = 브랜드·카테고리·색상을 뺀 나머지 상품 특징 (예: 스네이크, 킹스네이크, 오블리크)
+  const brandWords = new Set(brands.flatMap((b) => [b, ...(BRAND_ALIASES[b] || [])]).map(flat))
+  const distinctive = cleanTokens(`${lastUser} ${userText}`).filter(
+    (w) =>
+      !brandWords.has(flat(w)) &&
+      !CATEGORY_WORDS.some((c) => flat(w).includes(flat(c)) || flat(c).includes(flat(w))) &&
+      !['가방', '지갑', '남성', '여성', '남자', '여자'].includes(w) &&
+      !COLOR_WORDS.some((c) => w.startsWith(c))
+  )
+  // 특징어가 정적 풀 제목에 하나도 없다 = 카탈로그로는 못 찾는 요청 → 풀이 커도 라이브 강제
+  const distinctiveMiss =
+    distinctive.length > 0 &&
+    !pool.some((p) => distinctive.some((w) => flat(p.rawTitle).includes(flat(w))))
+  const staticWeak = pool.length < 12 || (brands.length === 0 && pool.length >= 200) || distinctiveMiss
   let liveItems = []
   if (staticWeak) {
     try {
-      const keyword = extractKeyword(lastUser) || extractKeyword(userText)
+      // 검색어 = 브랜드 + 특징어(최대 2) + 종류 — "구찌 스네이크 반지갑" 형태
+      const catHit = CATEGORY_WORDS.find((c) => flat(userText).includes(flat(c)))
+      const composed = [brands[0], ...distinctive.slice(0, 2), catHit].filter(Boolean).join(' ')
+      const keyword = composed || extractKeyword(lastUser) || extractKeyword(userText)
       if (keyword.length >= 2) {
-        liveItems = await liveSearch(keyword, { includeDanawa: pool.length < 5 })
+        // 명품·브랜드 질의는 다나와가 핵심 소스 — 브랜드 감지 시 항상 포함
+        liveItems = await liveSearch(keyword, { includeDanawa: brands.length > 0 || pool.length < 5 })
         if (budget) {
           const inBudget = liveItems.filter((p) => p.price >= budget.min && p.price <= budget.max)
           if (inBudget.length >= 2) liveItems = inBudget
@@ -294,7 +313,7 @@ export default async function handler(req, res) {
 
     let reply = typeof parsed.reply === 'string' ? parsed.reply : '조금 더 자세히 말씀해 주시겠어요?'
     if (matched.length === 0) {
-      const fallback = keywordFallback(userText, pool)
+      const fallback = keywordFallback(userText, pool, distinctive)
       if (fallback.length > 0) {
         matched = fallback
         reply += ' 말씀하신 조건과 가까운 상품부터 보여드릴게요.'
@@ -351,5 +370,9 @@ if (process.argv[1]?.endsWith('chat.js')) {
   assert.ok(pool2.length > 0 && pool2.every((p) => p.category === '원피스' && p.price <= 100000), '카테고리+예산 풀')
   const fb = keywordFallback('수분크림 추천', buildStaticPool('수분크림 추천', null))
   assert.ok(fb.length > 0 && fb.every((p) => p.category === '수분크림'), '카테고리 백스톱')
-  console.log('✓ chat 정책 OK — 예산 파서 5케이스 / 대체의도 / 정적 풀 / 백스톱')
+  const { cleanTokens: ct } = await import('./_live.js')
+  const toks = ct('아니야아니야 내가 원하는건 구찌 남성 반지갑인데 스네이크가 중간에 그려진거야')
+  assert.ok(toks.includes('스네이크'), '특징어 스네이크 추출: ' + toks.join(','))
+  assert.ok(!toks.includes('아니야아니야') && !toks.includes('중간에'), '대화체 오염 제거')
+  console.log('✓ chat 정책 OK — 예산 파서 5케이스 / 대체의도 / 정적 풀 / 백스톱 / 특징어 추출[' + toks.join(',') + ']')
 }

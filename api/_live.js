@@ -15,20 +15,37 @@ const cache = new Map() // keyword -> {at, items}
 const TTL = 10 * 60 * 1000
 const PER_SOURCE = 6
 
-/** 사용자 문장에서 쇼핑몰 검색어로 쓸 핵심 구절을 추출한다. */
+// 대화체에서 검색어를 오염시키는 말들 — 상품 특징이 아닌 토큰
+const TOKEN_STOP = new Set([
+  '아니', '아니야', '아니고', '내가', '나는', '난', '제가', '원하는건', '원하는', '원해', '찾는건',
+  '그거', '그게', '이거', '저거', '그런', '이런', '근데', '혹시', '좀', '진짜', '완전',
+  '중간에', '중간', '가운데', '앞에', '뒤에', '위에', '아래에', '옆에',
+  '그려진', '그려져', '그려진거야', '박힌', '박혀있는', '달린', '달려있는', '있는', '있잖아', '들어간',
+  '거야', '건데', '인데', '이야', '예요', '이에요', '같은', '느낌', '스타일', '디자인',
+  '추천', '추천해줘', '찾아줘', '알려줘', '보여줘', '골라줘', '해줘', '주세요',
+  '제일', '가장', '젤', '싼', '저렴한', '비싼', '괜찮은', '좋은', '이쁜', '예쁜',
+  '최저가', '시세', '가격', '판매처', '어디가', '어디서', '것', '거', '걸로', '제품', '상품',
+])
+const strip조사 = (w) => w.replace(/(인데|이고|이며|은|는|이|가|을|를|에|의|로|으로|와|과|랑|이나|이든|부터|까지|도)$/, '')
+
+/** 문장을 '상품 특징 토큰'으로 정제한다. */
+export function cleanTokens(text) {
+  return (text || '')
+    .replace(/\d+\s*[~-]?\s*\d*\s*만\s*원?\s*(대|이하|이상|아래|미만|안으로|이내|넘는)?/g, ' ')
+    .replace(/[,.!?~"'()]/g, ' ')
+    .split(/\s+/)
+    .map((w) => w.trim())
+    .filter((w) => {
+      const b = strip조사(w)
+      // 원형·조사제거형 모두 스톱워드 검사 + "아니야아니야" 류 반복 감탄 제거
+      return b.length >= 2 && !TOKEN_STOP.has(w) && !TOKEN_STOP.has(b) && !/^(아니(야|고|지)?)+$/.test(w)
+    })
+    .map(strip조사)
+}
+
+/** (구버전 호환) 문장에서 검색 구절 추출 — cleanTokens 기반. */
 export function extractKeyword(text) {
-  let t = (text || '').replace(/\s+/g, ' ').trim()
-  // 요청·조건 표현 제거 (검색 엔진에는 명사구가 잘 먹힌다)
-  t = t
-    .replace(/(찾아\s*줘|찾아\s*주세요|추천해\s*줘|추천해\s*주세요|추천|알려\s*줘|알려\s*주세요|보여\s*줘|보여\s*주세요|골라\s*줘|사고\s*싶어|살까|어때\??|있어\??|있나요\??)/g, ' ')
-    .replace(/(제일|가장|젤)\s*(싼|저렴한)\s*(거|것|걸로|제품|상품)?/g, ' ')
-    .replace(/(최저가|시세|가격|판매처\s*별로?|어디가)/g, ' ')
-    .replace(/\d+\s*만\s*원\s*(대|이하|이상|아래|미만|안으로|이내|넘는)?/g, ' ')
-    .replace(/[,.!?~]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-  // 너무 길면 앞쪽 명사구 위주로 절단
-  return t.split(' ').slice(0, 6).join(' ')
+  return cleanTokens(text).slice(0, 5).join(' ')
 }
 
 export async function liveSearch(keyword, { includeDanawa = false } = {}) {
@@ -46,9 +63,13 @@ export async function liveSearch(keyword, { includeDanawa = false } = {}) {
   const settled = await Promise.allSettled(jobs)
   const raw = settled.flatMap((s) => (s.status === 'fulfilled' ? s.value : []))
 
+  // 관련도 필터·정렬: 검색어 토큰과 제목의 겹침이 없으면 제외 (쇼핑몰의 느슨한 매칭 차단)
+  const kt = cleanTokens(keyword).map(flatten)
+  const overlap = (title) => kt.filter((t) => flatten(title).includes(t)).length
   const items = assignGroups(
     raw
-      .filter((r) => r.price >= 1000 && !isJunk(flatten(r.rawTitle)))
+      .filter((r) => r.price >= 1000 && !isJunk(flatten(r.rawTitle)) && (kt.length === 0 || overlap(r.rawTitle) >= 1))
+      .sort((a, b) => overlap(b.rawTitle) - overlap(a.rawTitle))
       .map((r) => ({
         ...r,
         brand: r.brand || guessBrand(r.rawTitle),
