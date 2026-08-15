@@ -211,7 +211,10 @@ function ChatView({ favs, toggleFav }) {
   async function send(text) {
     const question = text.trim()
     if (!question || loading) return
-    const next = [...turns, { role: 'user', content: question }]
+    // 재시도(다시 시도)면 같은 발화가 이미 마지막에 있으므로 중복 적재하지 않는다
+    const last = turns[turns.length - 1]
+    const next =
+      last?.role === 'user' && last.content === question ? [...turns] : [...turns, { role: 'user', content: question }]
     setTurns(next)
     setInput('')
     setError(null)
@@ -222,8 +225,8 @@ function ChatView({ favs, toggleFav }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ messages: next.map(({ role, content }) => ({ role, content })) }),
       })
-      const data = await res.json()
-      if (!res.ok) throw new Error(data.error || '요청에 실패했습니다.')
+      const data = await res.json().catch(() => ({})) // 게이트웨이 HTML 오류 페이지 대비
+      if (!res.ok) throw new Error(data.error || '서버 응답에 문제가 있어요. 잠시 후 다시 시도해 주세요.')
       setTurns([
         ...next,
         {
@@ -409,7 +412,7 @@ function MiniCard({ product, fav, onFav, onOpen }) {
   )
 }
 
-function BrowseView({ catalog, favs, toggleFav, onOpen, savedOnly }) {
+function BrowseView({ catalog, favs, toggleFav, onOpen, savedOnly, onRetry }) {
   const [group, setGroup] = useState('전체')
   const [cond, setCond] = useState('전체')
 
@@ -435,7 +438,14 @@ function BrowseView({ catalog, favs, toggleFav, onOpen, savedOnly }) {
     )
   }
   if (catalog.error) {
-    return <main className="browse"><div className="empty">{catalog.error}</div></main>
+    return (
+      <main className="browse">
+        <div className="empty">
+          {catalog.error}
+          <button className="empty__retry" onClick={onRetry}>다시 불러오기</button>
+        </div>
+      </main>
+    )
   }
 
   return (
@@ -484,13 +494,15 @@ export default function App() {
   }, [favs])
 
   useEffect(() => {
-    if (view === 'chat' || catalog.loaded || catalog.loading) return
+    if (view === 'chat' || catalog.loaded || catalog.loading || catalog.error) return
     setCatalog((c) => ({ ...c, loading: true }))
     fetch('/api/catalog')
       .then((r) => { if (!r.ok) throw new Error(); return r.json() })
       .then((d) => setCatalog({ products: d.products, loading: false, error: null, loaded: true }))
       .catch(() => setCatalog({ products: [], loading: false, error: '목록을 불러오지 못했어요. 잠시 후 다시 열어주세요.', loaded: false }))
-  }, [view, catalog.loaded, catalog.loading])
+  }, [view, catalog.loaded, catalog.loading, catalog.error])
+
+  const retryCatalog = () => setCatalog({ products: [], loading: false, error: null, loaded: false })
 
   const toggleFav = (id) =>
     setFavs((f) => (f.includes(id) ? f.filter((x) => x !== id) : [...f, id]))
@@ -522,10 +534,10 @@ export default function App() {
 
         {view === 'chat' && <ChatView favs={favs} toggleFav={toggleFav} />}
         {view === 'browse' && (
-          <BrowseView catalog={catalog} favs={favs} toggleFav={toggleFav} onOpen={setSheet} savedOnly={false} />
+          <BrowseView catalog={catalog} favs={favs} toggleFav={toggleFav} onOpen={setSheet} savedOnly={false} onRetry={retryCatalog} />
         )}
         {view === 'saved' && (
-          <BrowseView catalog={catalog} favs={favs} toggleFav={toggleFav} onOpen={setSheet} savedOnly />
+          <BrowseView catalog={catalog} favs={favs} toggleFav={toggleFav} onOpen={setSheet} savedOnly onRetry={retryCatalog} />
         )}
 
         {sheet && (

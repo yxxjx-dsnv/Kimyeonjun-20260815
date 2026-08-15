@@ -222,9 +222,9 @@ export default async function handler(req, res) {
     }
 
     // 존재하지 않는 id를 지어냈을 수 있으므로 카탈로그와 조인하며 걸러낸다.
-    let matched = (Array.isArray(parsed.matchedIds) ? parsed.matchedIds : [])
+    let matched = [...new Set((Array.isArray(parsed.matchedIds) ? parsed.matchedIds : []).map(String))]
       .slice(0, 3)
-      .map((id) => byId.get(String(id)))
+      .map((id) => byId.get(id))
       .filter(Boolean)
 
     // 브랜드 가드: 고객이 브랜드를 말했다면 다른 브랜드 매물은 코드 레벨에서 걸러낸다.
@@ -264,14 +264,18 @@ export default async function handler(req, res) {
       }
     }
 
+    const followUpQuestion =
+      typeof parsed.followUpQuestion === 'string' && parsed.followUpQuestion.trim()
+        ? parsed.followUpQuestion
+        : null
     const followUpOptions =
-      parsed.followUpQuestion && Array.isArray(parsed.followUpOptions)
+      followUpQuestion && Array.isArray(parsed.followUpOptions)
         ? parsed.followUpOptions.filter((o) => typeof o === 'string' && o.trim()).slice(0, 4).map((o) => o.slice(0, 12))
         : []
 
     return res.status(200).json({
       reply,
-      followUpQuestion: parsed.followUpQuestion || null,
+      followUpQuestion,
       followUpOptions,
       products: matched.map((p) => ({ ...p, priceIntel: priceIntel(p) })),
       catalogSize: CATALOG.length,
