@@ -274,6 +274,8 @@ function ChatView({ favs, toggleFav }) {
             placeholder="샤넬 가방인데 검정 누빔에 금색 체인 달린 거 찾아줘"
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => {
+              // 한글 IME 조합 확정 Enter는 전송이 아니다 — 이 가드가 없으면 타이핑 중 반토막 질의가 전송된다
+              if (e.nativeEvent.isComposing) return
               if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(input) }
             }}
             aria-label="찾는 상품 설명"
@@ -289,7 +291,7 @@ function ChatView({ favs, toggleFav }) {
         <p className="home__label">원하는 질문을 선택해보세요</p>
         <div className="grid2">
           {HOME_CARDS.map((c) => (
-            <button key={c.text} className="gcard" onClick={() => { setInput(c.text); heroRef.current?.focus() }}>
+            <button key={c.text} className="gcard" onClick={() => send(c.text)}>
               <span className="gcard__icon" style={{ background: c.tint }} aria-hidden="true">{c.icon}</span>
               <span className="gcard__label">
                 {c.label[0]}
@@ -374,6 +376,7 @@ function ChatView({ favs, toggleFav }) {
           placeholder="메세지를 입력하세요"
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => {
+            if (e.nativeEvent.isComposing) return // 한글 IME 조합 확정 Enter 무시
             if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(input) }
           }}
           aria-label="메세지 입력"

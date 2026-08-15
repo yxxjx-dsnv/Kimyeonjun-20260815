@@ -135,10 +135,19 @@ const detectModel = (text) =>
 const isJunk = (flat) => EXCLUDE.some((k) => flat.includes(k))
 
 /** 일반 상품 제목에서 브랜드 추정: "[일리윤] ..." 또는 첫 토큰. */
+const BRACKET_JUNK = ['무료배송', '기획', '세트', '단독', '특가', '증정'] // 대괄호가 브랜드가 아닌 판매 문구인 경우
 function guessBrand(title) {
-  const bracket = title.match(/^[[(【]([^\])】]{1,14})[\])】]/)
-  if (bracket) return bracket[1].trim()
-  const first = title.split(' ')[0].replace(/[^\p{L}\p{N}]/gu, '')
+  // 판매 문구 대괄호는 걷어내고 다음 대괄호/토큰에서 브랜드를 찾는다
+  let t = title
+  for (let i = 0; i < 2; i++) {
+    const m = t.match(/^[[(【]([^\])】]{1,14})[\])】]\s*/)
+    if (!m) break
+    if (BRACKET_JUNK.some((j) => m[1].includes(j))) { t = t.slice(m[0].length); continue }
+    return m[1].trim()
+  }
+  const bracket = null
+  if (bracket) return bracket
+  const first = t.split(' ')[0].replace(/[^\p{L}\p{N}]/gu, '')
   return first.length >= 2 && first.length <= 12 ? first : '기타'
 }
 

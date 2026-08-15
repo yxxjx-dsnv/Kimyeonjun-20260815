@@ -16,8 +16,10 @@ const MODEL = 'gpt-4o-mini'
 const MAX_MESSAGES = 20
 const MAX_CHARS = 2000
 
-// 2글자 미만 브랜드는 오탐(일반 단어 포함) 위험이 높아 가드 대상에서 뺀다.
-const BRANDS = [...new Set(CATALOG.map((p) => p.brand))].filter((b) => b.length >= 2)
+// 2글자 미만 브랜드와, 일상 단어와 충돌하는 이름은 브랜드 가드 오작동을 일으키므로 감지에서 뺀다.
+// ('자주'는 부사와, '무료배송'은 판매 문구와 충돌 — 실측에서 확인)
+const BRAND_STOP = new Set(['자주', '무료배송', '기획', '세트'])
+const BRANDS = [...new Set(CATALOG.map((p) => p.brand))].filter((b) => b.length >= 2 && !BRAND_STOP.has(b))
 // 사용자가 축약형으로 부르는 브랜드 (fallback 매칭용)
 const BRAND_ALIASES = {
   보테가베네타: ['보테가'], 루이비통: ['루이뷔통'], 셀린느: ['셀린'],
