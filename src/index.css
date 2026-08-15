@@ -73,11 +73,19 @@ button:focus-visible, a:focus-visible, textarea:focus-visible { outline: 2.5px s
 
 /* ---------- 앱바 ---------- */
 .appbar {
-  padding: 16px 20px 12px;
+  padding: 12px 12px 10px;
   border-bottom: 1px solid var(--line);
   background: var(--card);
   flex-shrink: 0;
 }
+.appbar__row { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+.appbar__right { display: flex; align-items: center; }
+.iconbtn {
+  display: grid; place-items: center;
+  width: 40px; height: 40px;
+  color: var(--ink); border-radius: 12px;
+}
+button.iconbtn:hover { background: var(--page); }
 .brandrow { display: flex; align-items: center; gap: 8px; }
 .brandmark {
   width: 22px; height: 22px; border-radius: 50%;
@@ -101,7 +109,6 @@ button:focus-visible, a:focus-visible, textarea:focus-visible { outline: 2.5px s
   font-size: 12.5px;
   font-weight: 700;
 }
-.appbar__sub { margin: 4px 0 0; font-size: 14px; color: var(--sub); }
 
 /* ---------- 채팅 ---------- */
 .thread {
@@ -121,20 +128,25 @@ button:focus-visible, a:focus-visible, textarea:focus-visible { outline: 2.5px s
   line-height: 1.35;
   letter-spacing: -0.01em;
 }
-.intro__hello span { color: var(--orange-deep); }
+.intro__hello span {
+  background: linear-gradient(transparent 64%, #ffd8bd 64%);
+  padding: 0 2px;
+}
 .intro__lead { margin: 0 0 22px; color: var(--sub); word-break: keep-all; }
 .intro__label { margin: 0 0 10px; font-size: 13.5px; font-weight: 700; color: var(--faint); }
 .chips { display: flex; flex-direction: column; gap: 10px; }
 .chip {
+  display: flex; align-items: flex-start; gap: 10px;
   text-align: left;
   padding: 14px 16px;
-  border: 1px solid var(--line);
+  border: 1px solid transparent;
   border-radius: var(--r);
   background: var(--page);
   font-size: 16px;
   line-height: 1.5;
   transition: border-color 0.15s, background 0.15s;
 }
+.chip__icon { flex-shrink: 0; font-size: 18px; line-height: 1.4; }
 .chip:hover { border-color: var(--orange); background: var(--orange-soft); }
 
 .turn { display: flex; flex-direction: column; gap: 12px; animation: rise 0.24s ease both; }
@@ -204,15 +216,18 @@ button:focus-visible, a:focus-visible, textarea:focus-visible { outline: 2.5px s
   padding: 0 16px 10px;
   flex-shrink: 0;
 }
+.quickies { flex-direction: column; }
 .quickies button {
-  padding: 10px 16px;
-  border: 1.5px solid var(--ink);
-  border-radius: 999px;
+  width: 100%;
+  text-align: left;
+  padding: 13px 16px;
+  border: 1px solid transparent;
+  border-radius: 14px;
   font-weight: 600;
   font-size: 15.5px;
-  background: var(--card);
+  background: var(--page);
 }
-.quickies button:hover { background: var(--orange-soft); border-color: var(--orange); }
+.quickies button:hover { background: #efeaff; border-color: #cabdf7; }
 
 /* ---------- 입력창 ---------- */
 .composer {
@@ -238,6 +253,11 @@ button:focus-visible, a:focus-visible, textarea:focus-visible { outline: 2.5px s
   max-height: 120px;
 }
 .composer textarea:focus { outline: none; border-color: var(--orange); background: var(--card); }
+.composer__clip {
+  display: grid; place-items: center;
+  width: 40px; height: 48px; flex-shrink: 0;
+  color: var(--faint);
+}
 .composer__send {
   flex-shrink: 0;
   width: 48px;
@@ -245,7 +265,7 @@ button:focus-visible, a:focus-visible, textarea:focus-visible { outline: 2.5px s
   border-radius: 50%;
   display: grid;
   place-items: center;
-  background: var(--ink);
+  background: var(--orange);
   color: #fff;
 }
 .composer__send:disabled { background: #cfd3d8; cursor: not-allowed; }
@@ -262,6 +282,22 @@ button:focus-visible, a:focus-visible, textarea:focus-visible { outline: 2.5px s
   overflow: hidden;
 }
 .card__main { display: flex; gap: 14px; padding: 14px; }
+.card__thumbwrap { position: relative; flex-shrink: 0; }
+.rankbadge {
+  position: absolute; top: -6px; left: -6px; z-index: 1;
+  min-width: 34px; height: 24px;
+  display: grid; place-items: center;
+  padding: 0 7px;
+  border-radius: 999px;
+  background: var(--ink); color: #fff;
+  font-size: 12.5px; font-weight: 800;
+}
+.ailabel {
+  margin: 2px 16px 6px;
+  font-size: 13px; font-weight: 800;
+  color: var(--orange-deep);
+}
+.ailabel::before { content: '✦ '; }
 .card__thumb {
   width: 100px; height: 100px; flex-shrink: 0;
   border-radius: 12px; object-fit: cover; background: var(--page);
@@ -368,17 +404,23 @@ button:focus-visible, a:focus-visible, textarea:focus-visible { outline: 2.5px s
   color: var(--hot); margin-right: 5px; vertical-align: 1px;
 }
 
-.card__cta {
-  display: block;
-  margin-top: 6px;
-  padding: 15px;
+.card__actions {
+  display: flex; gap: 9px;
+  padding: 12px 14px 14px;
+}
+.btn {
+  flex: 1;
+  padding: 13px 0;
+  border-radius: 999px;
   text-align: center;
   font-weight: 800;
-  color: #fff;
-  background: var(--ink);
+  font-size: 15.5px;
   text-decoration: none;
 }
-.card__cta:hover { background: var(--orange-deep); }
+.btn--ghost { border: 1.5px solid var(--line); color: var(--ink); background: var(--card); }
+.btn--ghost:hover { border-color: var(--ink); }
+.btn--solid { background: var(--ink); color: #fff; }
+.btn--solid:hover { background: var(--orange-deep); }
 
 /* ---------- 둘러보기 ---------- */
 .browse { flex: 1; overflow-y: auto; display: flex; flex-direction: column; }
@@ -485,4 +527,4 @@ button:focus-visible, a:focus-visible, textarea:focus-visible { outline: 2.5px s
   background: var(--page); font-weight: 700; font-size: 14.5px; color: var(--sub);
 }
 .sheet__panel .card { border: 0; box-shadow: none; }
-.sheet__panel .card__cta { border-radius: 12px; }
+.sheet__panel .card__actions { padding-bottom: 4px; }

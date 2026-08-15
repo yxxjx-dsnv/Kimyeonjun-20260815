@@ -1,9 +1,9 @@
 import { useState, useRef, useEffect, useMemo } from 'react'
 
 const EXAMPLES = [
-  '디올 지갑인데 베이지 바탕에 남색 패턴이 깔려 있고, 카드 넣는 얇은 거였어',
-  '샤넬 가방, 검정 누빔에 금색 체인 달린 어깨에 메는 거',
-  '보테가 지갑 그 짜임 가죽으로 된 초록색 있잖아',
+  { icon: '👛', text: '디올 지갑인데 베이지 바탕에 남색 패턴이 깔려 있고, 카드 넣는 얇은 거였어' },
+  { icon: '👜', text: '샤넬 가방, 검정 누빔에 금색 체인 달린 어깨에 메는 거' },
+  { icon: '💚', text: '보테가 지갑 그 짜임 가죽으로 된 초록색 찾아줘' },
 ]
 
 const won = (n) => `${n.toLocaleString('ko-KR')}원`
@@ -128,16 +128,19 @@ function PeerList({ intel }) {
 }
 
 /* ---------- 상품 카드 ---------- */
-function ProductCard({ product, fav, onFav }) {
+function ProductCard({ product, fav, onFav, rank }) {
   const intel = product.priceIntel
   return (
     <article className="card">
       <div className="card__main">
-        {product.image ? (
-          <img className="card__thumb" src={product.image} alt={product.name} loading="lazy" />
-        ) : (
-          <div className="card__thumb card__thumb--empty">{product.brand.slice(0, 1)}</div>
-        )}
+        <div className="card__thumbwrap">
+          {rank && <span className="rankbadge">{rank}위</span>}
+          {product.image ? (
+            <img className="card__thumb" src={product.image} alt={product.name} loading="lazy" />
+          ) : (
+            <div className="card__thumb card__thumb--empty">{product.brand.slice(0, 1)}</div>
+          )}
+        </div>
         <div className="card__body">
           <div className="card__top">
             <span className="card__brand">{product.brand}</span>
@@ -164,13 +167,24 @@ function ProductCard({ product, fav, onFav }) {
         </div>
       </div>
 
+      {intel && <div className="ailabel">AI 가격 분석</div>}
       <SavingsLedger product={product} intel={intel} />
       <MarketRange intel={intel || {}} price={product.price} />
       <PeerList intel={intel} />
 
-      <a className="card__cta" href={product.url} target="_blank" rel="noreferrer">
-        {product.condition === 'new' ? '최저가 구매하기' : '매물 보러 가기'}
-      </a>
+      <div className="card__actions">
+        <a className="btn btn--ghost" href={product.url} target="_blank" rel="noreferrer">
+          {product.condition === 'new' ? '상세 보기' : '판매글 보기'}
+        </a>
+        <a
+          className="btn btn--solid"
+          href={intel?.newBest?.url || product.url}
+          target="_blank"
+          rel="noreferrer"
+        >
+          최저가 구매하기
+        </a>
+      </div>
     </article>
   )
 }
@@ -237,11 +251,12 @@ function ChatView({ favs, toggleFav }) {
               정확한 상품명을 몰라도 괜찮습니다. 색상, 소재, 장식처럼 기억나는 특징을
               말씀해 주시면 가장 비슷한 상품을 찾아 새상품·중고 가격까지 비교해 드립니다.
             </p>
-            <p className="intro__label">이렇게 물어보실 수 있어요</p>
+            <p className="intro__label">원하는 질문을 선택해보세요</p>
             <div className="chips">
               {EXAMPLES.map((ex) => (
-                <button key={ex} className="chip" onClick={() => { setInput(ex); inputRef.current?.focus() }}>
-                  {ex}
+                <button key={ex.text} className="chip" onClick={() => { setInput(ex.text); inputRef.current?.focus() }}>
+                  <span className="chip__icon" aria-hidden="true">{ex.icon}</span>
+                  {ex.text}
                 </button>
               ))}
             </div>
@@ -256,8 +271,8 @@ function ChatView({ favs, toggleFav }) {
             </div>
             {turn.products?.length > 0 && (
               <div className="cards">
-                {turn.products.map((p) => (
-                  <ProductCard key={p.id} product={p} fav={favs.includes(p.id)} onFav={toggleFav} />
+                {turn.products.map((p, pi) => (
+                  <ProductCard key={p.id} product={p} fav={favs.includes(p.id)} onFav={toggleFav} rank={pi + 1} />
                 ))}
               </div>
             )}
@@ -287,11 +302,14 @@ function ChatView({ favs, toggleFav }) {
       )}
 
       <div className="composer">
+        <span className="composer__clip" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M20.5 11.5 12 20a5.3 5.3 0 0 1-7.5-7.5l8.8-8.8a3.6 3.6 0 0 1 5.1 5.1l-8.7 8.7a1.9 1.9 0 0 1-2.7-2.7l8-8" /></svg>
+        </span>
         <textarea
           ref={inputRef}
           rows={1}
           value={input}
-          placeholder="메시지를 입력하세요"
+          placeholder="메세지를 입력하세요"
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(input) }
@@ -441,12 +459,24 @@ export default function App() {
     <div className="stage">
       <div className="phone">
         <header className="appbar">
-          <div className="brandrow">
-            <span className="brandmark" aria-hidden="true" />
-            <h1 className="wordmark">shopport</h1>
-            <span className="featurechip">명품 에이전트</span>
+          <div className="appbar__row">
+            <span className="iconbtn" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round"><path d="M4 6.5h16M4 12h16M4 17.5h16" /></svg>
+            </span>
+            <div className="brandrow">
+              <span className="brandmark" aria-hidden="true" />
+              <h1 className="wordmark">shopport</h1>
+              <span className="featurechip">명품 에이전트</span>
+            </div>
+            <div className="appbar__right">
+              <button className="iconbtn" onClick={() => setTab('saved')} aria-label="찜 목록">
+                {I.heart(false)}
+              </button>
+              <span className="iconbtn" aria-hidden="true">
+                <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round"><circle cx="12" cy="8.2" r="3.4" /><path d="M4.8 20a7.2 7.2 0 0 1 14.4 0" /></svg>
+              </span>
+            </div>
           </div>
-          <p className="appbar__sub">이름을 몰라도, 기억나는 특징만으로 찾아드립니다</p>
         </header>
 
         {tab === 'chat' && <ChatView favs={favs} toggleFav={toggleFav} />}
