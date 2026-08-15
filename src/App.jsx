@@ -6,7 +6,7 @@ const won = (n) => `${n.toLocaleString('ko-KR')}원`
 const FAV_KEY = 'ggij:favs'
 const SESSION_KEY = 'ggij:sessions'
 const SELLER_TINT = {
-  '다나와 최저가': '#16a34a', '29CM': '#111827', 무신사: '#2563eb', 컬리: '#7c3aed',
+  '다나와 최저가': '#16a34a', '29CM': '#111827', 무신사: '#2563eb', 컬리: '#7c3aed', KREAM: '#0d0d0d',
 }
 
 /* ---------- 아이콘 ---------- */
@@ -290,7 +290,7 @@ function AgentTurn({ turn, favs, toggleFav, onCompare }) {
         {turn.liveCount > 0 ? (
           <span className="statusrow__chip statusrow__chip--live">실시간 검색 {turn.liveCount}건 포함</span>
         ) : (
-          turn.catalogSize && <span className="statusrow__chip">4개 쇼핑몰 · {turn.catalogSize}개 상품</span>
+          turn.catalogSize && <span className="statusrow__chip">5개 쇼핑몰 · {turn.catalogSize}개 상품</span>
         )}
         {turn.budget && (
           <span className="statusrow__chip">
@@ -505,7 +505,7 @@ function ChatView({ favs, toggleFav, onCompare, turns, setTurns, goDeals, index 
         {loading && (
           <div className="statusrow statusrow--busy" aria-label="답변 작성 중">
             <span className="spin" aria-hidden="true" />
-            4개 쇼핑몰에서 찾고 있어요…
+            5개 쇼핑몰에서 찾고 있어요…
           </div>
         )}
         {error && (
@@ -785,7 +785,7 @@ function CompareSheet({ product, fav, onFav, onClose }) {
 
         <div className="csheet__sechead">
           <b>판매처 별 판매가</b>
-          <span>4개 쇼핑몰 데이터 비교</span>
+          <span>5개 쇼핑몰 데이터 비교</span>
         </div>
         <ul className="csheet__rows">
           {rows.map((r, i) => (
