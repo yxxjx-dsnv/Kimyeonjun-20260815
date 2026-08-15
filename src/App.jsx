@@ -484,10 +484,6 @@ function ChatView({ favs, toggleFav, onCompare, turns, setTurns, goDeals, index 
           )}
         </div>
 
-        <p className="home__note">
-          레브잇 PMF 과제 프로토타입 — 쇼포트의 UX 문법을 차용한 데모이며 실제 쇼포트 서비스가
-          아닙니다.
-        </p>
       </main>
     )
   }
@@ -968,10 +964,6 @@ export default function App() {
           />
         )}
       </div>
-      <p className="colophon">
-        레브잇 PMF 과제 프로토타입 — 쇼포트의 UX 문법을 차용한 데모이며 실제 쇼포트 서비스가
-        아닙니다. 데이터: 다나와 · 29CM · 무신사 · 컬리 (새상품 {`${900}`}개 + 실시간 검색).
-      </p>
     </div>
   )
 }

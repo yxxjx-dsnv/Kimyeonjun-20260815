@@ -31,7 +31,7 @@ const COLOR_WORDS = [
   '검정', '검은', '블랙', '흰', '화이트', '아이보리', '베이지', '갈색', '브라운', '카멜',
   '남색', '네이비', '파란', '블루', '하늘', '빨간', '레드', '와인', '버건디', '분홍', '핑크',
   '금색', '골드', '금장', '은색', '실버', '은장', '회색', '그레이', '카키', '초록', '그린',
-  '노란', '옐로우', '보라', '퍼플', '오렌지', '데님',
+  '노란', '옐로우', '보라', '퍼플', '오렌지', '데님', '하양', '하얀', '검은색', '흰색',
 ]
 
 const flat = (s) => (s || '').replace(/\s+/g, '')
@@ -117,9 +117,54 @@ const SYSTEM_PROMPT = `너는 쇼핑 앱 '쇼포트'의 AI 쇼핑 에이전트�
 반드시 아래 JSON 형식으로만 답한다:
 {"reply": "고객에게 할 말", "matchedIds": ["id1","id2"], "followUpQuestion": "질문 또는 null", "followUpOptions": ["선택지"] }`
 
+/**
+ * 라이브 검색용 LLM 키워드 추출 — 규칙 기반 한국어 파싱의 한계(대화체 변형 무한)를
+ * 초경량 모델 호출로 대체한다. 실패하면 규칙 기반으로 폴백.
+ * ('사카이랑 콜라보한거고' → keyword "나이키 사카이 운동화", features ["사카이","콜라보"])
+ */
+const kwCache = new Map()
+async function llmKeyword(apiKey, history) {
+  const key = history.map((m) => m.content).join('|').slice(-400)
+  const hit = kwCache.get(key)
+  if (hit) return hit
+  try {
+    const r = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+      body: JSON.stringify({
+        model: 'gpt-4o-mini',
+        temperature: 0,
+        max_tokens: 80,
+        response_format: { type: 'json_object' },
+        messages: [
+          {
+            role: 'system',
+            content:
+              '대화에서 고객이 지금 찾는 상품의 쇼핑몰 검색어를 추출해라. JSON만 답한다: {"keyword":"쇼핑몰 검색창에 입력할 2~5단어 (브랜드·콜라보·모델·종류 우선, 감탄사·조사 금지)","features":["콜라보 상대·라인·모델명 등 이 상품만 구별하는 고유 단어 1~3개 (색상·소재·일반명사 금지)"]}',
+          },
+          { role: 'user', content: history.slice(-4).map((m) => `${m.role === 'user' ? '고객' : '비서'}: ${m.content}`).join('\n') },
+        ],
+      }),
+      signal: AbortSignal.timeout(3500),
+    })
+    if (!r.ok) return null
+    const d = await r.json()
+    const parsed = JSON.parse(d.choices?.[0]?.message?.content || '{}')
+    const out =
+      typeof parsed.keyword === 'string' && parsed.keyword.trim().length >= 2
+        ? { keyword: parsed.keyword.trim().slice(0, 60), features: (Array.isArray(parsed.features) ? parsed.features : []).filter((f) => typeof f === 'string').slice(0, 4) }
+        : null
+    if (out) kwCache.set(key, out)
+    return out
+  } catch {
+    return null // 추출 실패는 치명적이지 않다 — 규칙 기반으로 폴백
+  }
+}
+
 const META_CATEGORY = {
   가방: ['숄더백', '토트백', '크로스백', '클러치', '백팩'],
   지갑: ['카드지갑', '반지갑', '장지갑'],
+  신발: ['운동화', '로퍼'],
 }
 
 /** 1단계 검색: 브랜드·카테고리·예산으로 정적 카탈로그를 좁힌다. */
@@ -199,30 +244,66 @@ export default async function handler(req, res) {
     (w) =>
       !brandWords.has(flat(w)) &&
       !CATEGORY_WORDS.some((c) => flat(w).includes(flat(c)) || flat(c).includes(flat(w))) &&
-      !['가방', '지갑', '남성', '여성', '남자', '여자'].includes(w) &&
+      !['가방', '지갑', '신발', '남성', '여성', '남자', '여자', '어떤', '스타일'].includes(w) &&
       !COLOR_WORDS.some((c) => w.startsWith(c))
   )
   // 특징어가 정적 풀 제목에 하나도 없다 = 카탈로그로는 못 찾는 요청 → 풀이 커도 라이브 강제
-  const distinctiveMiss =
-    distinctive.length > 0 &&
-    !pool.some((p) => distinctive.some((w) => flat(p.rawTitle).includes(flat(w))))
+  let distinctiveFinal = distinctive
+  // 특징어 '하나라도' 정적 풀이 못 커버하면 라이브 검색 필요 (사카이는 없는데 '신발'만
+  // 우연히 제목에 있다고 라이브를 건너뛰던 논리 오류를 실사용 재현으로 확인 후 수정)
+  const distinctiveMiss = distinctive.some(
+    (w) => !pool.some((p) => flat(p.rawTitle).includes(flat(w)))
+  )
   const staticWeak = pool.length < 12 || (brands.length === 0 && pool.length >= 200) || distinctiveMiss
   let liveItems = []
   if (staticWeak) {
     try {
-      // 검색어 = 브랜드 + 특징어(최대 2) + 종류 — "구찌 스네이크 반지갑" 형태
+      // 1순위: LLM 키워드 추출 / 폴백: 규칙 조립.
+      // 쇼핑몰 검색 엔진은 검색어가 길면 0건을 내므로, 결과가 나올 때까지
+      // 점점 짧은 변형으로 재시도한다 (캐스케이드).
+      const ext = await llmKeyword(apiKey, history)
+      if (ext?.features?.length) distinctiveFinal = [...new Set([...ext.features, ...distinctive])]
       const catHit = CATEGORY_WORDS.find((c) => flat(userText).includes(flat(c)))
-      const composed = [brands[0], ...distinctive.slice(0, 2), catHit].filter(Boolean).join(' ')
-      const keyword = composed || extractKeyword(lastUser) || extractKeyword(userText)
-      if (keyword.length >= 2) {
-        // 명품·브랜드 질의는 다나와가 핵심 소스 — 브랜드 감지 시 항상 포함
-        liveItems = await liveSearch(keyword, { includeDanawa: brands.length > 0 || pool.length < 5 })
-        if (budget) {
-          const inBudget = liveItems.filter((p) => p.price >= budget.min && p.price <= budget.max)
-          if (inBudget.length >= 2) liveItems = inBudget
-        }
-        pool = [...liveItems, ...pool].slice(0, 300)
+      const feat = ext?.features?.[0] || distinctive[0]
+      const variants = []
+      if (ext?.keyword) {
+        // "나이키 사카이 콜라보 운동화" → 0건이면 "나이키 사카이 콜라보" → "나이키 사카이" 순으로 축약
+        const kws = ext.keyword.split(/\s+/).slice(0, 4)
+        for (let n = kws.length; n >= 2; n--) variants.push(kws.slice(0, n).join(' '))
       }
+      if (brands[0] && feat) {
+        if (catHit) variants.push([brands[0], feat, catHit].join(' '))
+        variants.push([brands[0], feat].join(' '))
+      } else if (feat && catHit) {
+        variants.push([feat, catHit].join(' '))
+      }
+      variants.push(extractKeyword(lastUser) || extractKeyword(userText))
+      const includeDanawa = brands.length > 0 || pool.length < 5
+      // 특징어(사카이 등)가 실제로 포함된 결과를 낸 변형을 우선한다 —
+      // 범용 결과("나이키 신발")로 조기 종료하면 정작 찾던 상품을 놓친다
+      let generic = []
+      if (process.env.DEBUG_LIVE) console.warn('[live] ext=', JSON.stringify(ext), 'variants=', variants, 'distinctive=', distinctiveFinal)
+      for (const kw of [...new Set(variants)].filter((k) => k && k.length >= 2)) {
+        const items = await liveSearch(kw, { includeDanawa })
+        if (process.env.DEBUG_LIVE) console.warn('[live]', kw, '→', items.length, '건')
+        if (items.length === 0) continue
+        // 색상은 어느 상품에나 흔해 판정에서 제외 — 사카이·콜라보 같은 강특징만 본다
+        const strong = distinctiveFinal.filter((w) => !COLOR_WORDS.some((c) => w.startsWith(c) || c.startsWith(w)))
+        const featHit =
+          strong.length === 0 ||
+          strong.some((w) => items.some((p) => flat(p.rawTitle).includes(flat(w))))
+        if (featHit) {
+          liveItems = items
+          break
+        }
+        if (generic.length === 0) generic = items
+      }
+      if (liveItems.length === 0) liveItems = generic
+      if (budget) {
+        const inBudget = liveItems.filter((p) => p.price >= budget.min && p.price <= budget.max)
+        if (inBudget.length >= 2) liveItems = inBudget
+      }
+      if (liveItems.length > 0) pool = [...liveItems, ...pool].slice(0, 300)
     } catch (e) {
       console.warn('live search failed', String(e).slice(0, 120)) // 라이브 실패는 치명적이지 않다
     }
@@ -313,7 +394,7 @@ export default async function handler(req, res) {
 
     let reply = typeof parsed.reply === 'string' ? parsed.reply : '조금 더 자세히 말씀해 주시겠어요?'
     if (matched.length === 0) {
-      const fallback = keywordFallback(userText, pool, distinctive)
+      const fallback = keywordFallback(userText, pool, distinctiveFinal)
       if (fallback.length > 0) {
         matched = fallback
         reply += ' 말씀하신 조건과 가까운 상품부터 보여드릴게요.'

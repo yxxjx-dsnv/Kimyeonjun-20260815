@@ -24,7 +24,8 @@ check('2×2 선택지 그리드 4개', (html.match(/class="gcard"/g) || []).leng
 check('원하는 질문을 선택해보세요', html.includes('원하는 질문을 선택해보세요'))
 check('헤더 아이콘 내비 — 홈 화면엔 탐색·찜만 (실제 앱과 동일)', !html.includes('AI 찾기 홈') && html.includes('최저가 추적') && html.includes('찜한 목록'))
 check('하단 탭바 없음 (쇼포트에 없음)', !html.includes('tabbar'))
-check('프로토타입 고지 (화면 내)', html.includes('실제 쇼포트 서비스가'))
+check('화면 내 고지 문구 제거됨 (요청 반영)', !html.includes('실제 쇼포트 서비스가'))
+check('타이틀 레벨 프로토타입 표기 유지', readFileSync(`${root}/index.html`, 'utf8').includes('프로토타입'))
 await vite.close()
 
 // 2) 소스 분기 검증
