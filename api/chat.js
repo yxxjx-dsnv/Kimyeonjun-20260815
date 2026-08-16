@@ -60,6 +60,25 @@ function detectBrands(text) {
 const detectBrand = (text) => detectBrands(text)[0]
 
 /**
+ * 브랜드 사전을 실시간 검색 결과까지 넓혀서 다시 감지한다.
+ *
+ * BRANDS는 카탈로그(948건)에서만 뽑기 때문에 그 밖의 브랜드는 감지되지 않고,
+ * 감지되지 않으면 브랜드 가드가 통째로 꺼진다.
+ * 그래서 "메종 마르지엘라 카드지갑"에 질스튜어트 카드지갑이 그대로 통과했다.
+ * 라이브 결과의 브랜드를 사전에 합치면, 카탈로그에 없는 브랜드도 가드를 받는다.
+ */
+export function detectBrandsWithLive(text, liveItems = []) {
+  const t = flat(text)
+  const found = new Set(detectBrands(text))
+  for (const p of liveItems) {
+    const b = (p.brand || '').trim()
+    // 2글자 미만은 오탐이 크고, 일반명사와 겹치는 이름은 BRAND_STOP으로 이미 걸러진다.
+    if (b.length >= 2 && !BRAND_STOP.has(b) && t.includes(flat(b))) found.add(b)
+  }
+  return [...found]
+}
+
+/**
  * 예산 파싱 — "10만원 이하", "5만원대", "10~20만원", "3만원 안으로" 등.
  * (실사용 앱 리뷰에서 가장 많은 불만이 "예산을 말해도 무시한다"였다 —
  *  예산은 모델 판단에 맡기지 않고 서버가 필터로 강제한다)
@@ -139,7 +158,10 @@ const SYSTEM_PROMPT = `너는 쇼핑 앱 '쇼포트'의 AI 쇼핑 에이전트�
    (목록에는 실시간 검색 결과도 포함되어 있다 — '라이브' 표시)
 
 반드시 아래 JSON 형식으로만 답한다:
-{"reply": "고객에게 할 말", "matchedIds": ["id1","id2"], "followUpQuestion": "질문 또는 null", "followUpOptions": ["선택지"] }`
+{"reply": "고객에게 할 말", "askedBrand": "고객이 말한 브랜드명 또는 null", "matchedIds": ["id1","id2"], "followUpQuestion": "질문 또는 null", "followUpOptions": ["선택지"] }
+
+askedBrand는 고객이 브랜드를 명시했을 때만 그 이름을 적는다(목록에 없는 브랜드여도 적는다).
+브랜드를 말하지 않았으면 null이다. 서버가 이 값으로 다른 브랜드 상품을 걸러낸다.`
 
 /**
  * 라이브 검색용 LLM 키워드 추출 — 규칙 기반 한국어 파싱의 한계(대화체 변형 무한)를
@@ -351,7 +373,8 @@ export default async function handler(req, res) {
   let pool = buildStaticPool(userText, budget)
 
   // --- 2단계: 라이브 검색 ---
-  const brands = detectBrands(userText)
+  // 라이브 결과를 받은 뒤 브랜드 사전을 넓혀 다시 감지하므로 let으로 둔다.
+  let brands = detectBrands(userText)
   // '특징어' = 브랜드·카테고리·색상을 뺀 나머지 상품 특징 (예: 스네이크, 킹스네이크, 오블리크)
   const brandWords = new Set(brands.flatMap((b) => [b, ...(BRAND_ALIASES[b] || [])]).map(flat))
   const distinctive = cleanTokens(`${lastUser} ${userText}`).filter(
@@ -436,6 +459,9 @@ export default async function handler(req, res) {
       // 카탈로그의 정답이 목록 뒤로 밀려 모델이 앞쪽을 집는다.
       if (liveItems.length > 0)
         pool = (liveGeneric ? [...pool, ...liveItems] : [...liveItems, ...pool]).slice(0, 300)
+
+      // 카탈로그에 없는 브랜드(메종 마르지엘라 등)도 이제 브랜드 가드를 받는다.
+      brands = detectBrandsWithLive(userText, liveItems)
     } catch (e) {
       console.warn('live search failed', String(e).slice(0, 120)) // 라이브 실패는 치명적이지 않다
     }
@@ -550,6 +576,26 @@ export default async function handler(req, res) {
     // 그걸 보여주는 순간 이 서비스의 신뢰가 무너진다.
     // 고객 조건과 정면으로 어긋나는 후보를 먼저 뺀다 (손목시계 요청에 벽시계 등).
     matched = dropConflicting(userText, matched)
+
+    /* 카탈로그에도 라이브 결과에도 없는 브랜드까지 가드한다.
+       BRANDS는 카탈로그에서만 뽑히므로 "메종 마르지엘라"·"르메르"는 감지되지 않았고,
+       감지가 안 되면 가드가 꺼져 질스튜어트 카드지갑·타르틴베이커리 크루아상이 그대로 나갔다.
+       브랜드 인식은 모델이 잘하는 일이므로 모델에게 받고, 강제는 코드가 한다. */
+    const askedBrand = typeof parsed.askedBrand === 'string' ? parsed.askedBrand.trim() : ''
+    if (askedBrand && !wantsAlternative(userText) && !wantsExclusion(userText)) {
+      const a = flat(askedBrand)
+      // 표기 흔들림 흡수: "톰브라운"↔"톰 브라운", "아크네 스튜디오"↔"아크네스튜디오"
+      const sameBrand = (p) => {
+        const b = flat(p.brand || '')
+        return b.length > 0 && (b.includes(a) || a.includes(b))
+      }
+      const kept = matched.filter(sameBrand)
+      if (kept.length > 0) matched = kept
+      else if (matched.length > 0) {
+        matched = []
+        reply = `${askedBrand} 상품은 지금 찾지 못했어요. 다른 브랜드로 찾아드릴까요?`
+      }
+    }
 
     // 갈래는 '마지막 발화'를 우선한다 — 정정("아니 가방이었어")이 앞턴에 지지 않도록.
     const mismatch = typeMismatch(userText, matched, lastUser)
