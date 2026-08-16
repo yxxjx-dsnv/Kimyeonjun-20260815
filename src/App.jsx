@@ -887,6 +887,11 @@ const GUIDE_STEPS = [
       '카메라 버튼으로 사진을 넣어 찾을 수도 있어요.',
     ],
     why: '고객은 상품을 이름이 아니라 색·무늬·형태로 기억합니다. 명품 상품명은 "크리스찬디올 SADDLE 플랩 카드 지갑 S5611CTZQ M928"처럼 외워서 검색할 수 있는 문자열이 아닙니다.',
+    tech: {
+      name: '2단계 검색 (retrieve → rerank)',
+      body: '948건을 전부 AI에 넣으면 요청당 24k 토큰이라 분당 한도에 걸립니다. 브랜드·갈래·예산으로 먼저 100건 안팎까지 좁힌 뒤 AI가 그 안에서 고릅니다. 2~7k 토큰으로 줄었고, 상품이 늘어도 버팁니다.',
+      ref: '정보검색의 cascade ranking — 넓게 거르고 정밀하게 재순위',
+    },
   },
   {
     key: 'thread',
@@ -898,6 +903,11 @@ const GUIDE_STEPS = [
       '카드의 [상세 보기]를 누르면 가격 비교가 열립니다.',
     ],
     why: '후보를 길게 나열하면 결국 고객이 목록을 다시 훑어야 해서 기존 검색과 같아집니다. 되묻기를 대화 전체에서 1회로 제한한 것도 같은 이유입니다 — 질문만 반복하는 챗봇이 되지 않도록 서버 코드로 강제했습니다.',
+    tech: {
+      name: '선택 과부하를 피한 3개 제한',
+      body: '선택지가 많을수록 만족도와 구매 결정률이 떨어진다는 연구가 있습니다. 24종을 진열했을 때보다 6종일 때 실제 구매가 훨씬 많았던 실험이 대표적입니다. 그래서 후보를 3개로 잘랐습니다.',
+      ref: 'Iyengar & Lepper (2000), 선택 과부하 — 이후 Chernev 등의 메타분석으로 조건부 재확인',
+    },
   },
   {
     key: 'deals',
@@ -909,6 +919,11 @@ const GUIDE_STEPS = [
       '근거가 약하면 % 대신 "N건 중 1번째로 저렴"으로 바뀝니다.',
     ],
     why: '이 제품이 파는 것은 "싸게 샀다는 확신"이라, 그 근거가 틀리면 기능이 없느니만 못합니다. 편차가 큰 그룹은 % 주장을 포기하도록 막아서, 948건 중 % 표기가 붙는 건 73건(7.7%)뿐입니다.',
+    tech: {
+      name: '준거가격을 만들어 구매를 확정시키기',
+      body: '사람은 절대 가격이 아니라 기준점과의 차이로 싸다·비싸다를 느낍니다. 기준이 없으면 판단을 미루고, 미룬 구매는 대부분 돌아오지 않습니다. 그래서 같은 모델의 가격 분포를 함께 보여줍니다. 다만 그 기준이 틀리면 역효과라, 편차가 1.5배를 넘는 그룹에서는 % 주장을 포기합니다.',
+      ref: '앵커링(Tversky & Kahneman, 1974) · 거래 효용과 준거가격(Thaler, 1985)',
+    },
   },
   {
     key: 'saved',
@@ -916,8 +931,39 @@ const GUIDE_STEPS = [
     title: '하트로 담아두기',
     how: ['하트를 누르면 찜 목록에 담깁니다.', '오른쪽 위 하트 아이콘에서 모아 볼 수 있어요.'],
     why: '고액 상품은 한 번에 결정하지 않습니다. 다시 찾아오는 비용을 줄이는 것이 이탈을 막는 가장 싼 방법입니다.',
+    tech: {
+      name: '탐색 비용을 0으로 만들어 재방문 유도',
+      body: '한 번 찾아낸 상품을 다시 찾으려면 처음의 탐색을 반복해야 합니다. 그 비용이 곧 이탈 확률입니다. 찜은 기능이라기보다, 이 서비스가 해결한 "찾기 어려움"이 두 번째 방문에서 되살아나지 않게 하는 장치입니다.',
+      ref: '탐색 비용(search cost)이 전환에 미치는 영향 — 고관여·고가 카테고리에서 특히 큼',
+    },
   },
 ]
+
+/* 한 번의 검색이 지나는 경로 — 사이드 가이드용 축약 다이어그램.
+   숫자는 실제 값이다(카탈로그 948건, 좁힌 뒤 ~100건, 최종 3건). */
+function PipelineDiagram() {
+  const rows = [
+    { n: '948', label: '수집한 상품', sub: '5개 쇼핑몰', tone: 'dim' },
+    { n: '~100', label: '1단계 검색', sub: '브랜드·갈래·예산으로 좁힘', tone: 'mid' },
+    { n: '+α', label: '실시간 검색 병합', sub: '카탈로그에 없으면 그 자리에서', tone: 'mid' },
+    { n: '3', label: 'AI 재순위', sub: '묘사와 가장 가까운 후보', tone: 'hot' },
+    { n: '5', label: '서버 가드 통과', sub: '틀린 후보를 걸러냄', tone: 'mid' },
+    { n: '✓', label: '가격 계산', sub: '시세 분포·순위는 서버가', tone: 'dim' },
+  ]
+  return (
+    <ol className="pipe" aria-label="검색 처리 단계">
+      {rows.map((r, i) => (
+        <li key={i} className={`pipe__row pipe__row--${r.tone}`}>
+          <span className="pipe__n">{r.n}</span>
+          <span className="pipe__txt">
+            <b>{r.label}</b>
+            <em>{r.sub}</em>
+          </span>
+        </li>
+      ))}
+    </ol>
+  )
+}
 
 function GuideRail({ side, view, hasTurns }) {
   const active =
@@ -963,10 +1009,24 @@ function GuideRail({ side, view, hasTurns }) {
           </div>
 
           <div className="guide__sec">
-            <h3>지킨 원칙</h3>
-            <p className="guide__p">
-              근거가 약하면 숫자를 만들지 않습니다. 가격은 전부 서버가 계산하고,
-              AI는 가격을 말할 수 없습니다.
+            <h3>한 번의 검색에서 일어나는 일</h3>
+            <PipelineDiagram />
+            <p className="guide__p guide__dim">
+              AI에게 맡기는 것은 <b>고르는 일</b>뿐입니다. 좁히기·가격 계산·검증은 전부 서버 코드가 합니다.
+            </p>
+          </div>
+
+          <div className="guide__sec">
+            <h3>AI가 틀려도 사용자에게 닿지 않게</h3>
+            <ul className="gguard">
+              <li><b>브랜드 가드</b> 말한 브랜드 외 상품 차단</li>
+              <li><b>갈래 가드</b> 슬리퍼를 물었는데 지갑이 나오면 차단</li>
+              <li><b>예산 가드</b> 범위 밖 상품 차단</li>
+              <li><b>모순 가드</b> 상품이 있는데 "없다"·0건인데 "추천" 차단</li>
+              <li><b>id 조인</b> AI가 지어낸 상품은 화면에 못 올라옴</li>
+            </ul>
+            <p className="guide__p guide__dim">
+              근거가 약하면 숫자를 만들지 않습니다. AI는 가격을 말할 수 없고, 가격은 전부 서버가 계산합니다.
             </p>
           </div>
 
@@ -998,6 +1058,13 @@ function GuideRail({ side, view, hasTurns }) {
               <span>왜 이렇게 했나</span>
               {s.why}
             </p>
+            {s.tech && (
+              <div className="gtech">
+                <div className="gtech__name">{s.tech.name}</div>
+                <p className="gtech__body">{s.tech.body}</p>
+                <p className="gtech__ref">{s.tech.ref}</p>
+              </div>
+            )}
           </div>
         ))}
       </div>

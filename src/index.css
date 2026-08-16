@@ -154,6 +154,51 @@ button:focus-visible, a:focus-visible, textarea:focus-visible { outline: 2.5px s
   display: block; font-size: 11.5px; font-weight: 800;
   letter-spacing: .03em; color: var(--faint); margin-bottom: 3px;
 }
+
+/* ---- 지금 화면에서 실제로 도는 기법 ---- */
+.gtech {
+  margin-top: 8px; padding: 10px 11px;
+  border: 1px solid var(--line); border-left: 3px solid var(--ink);
+  border-radius: 9px; background: var(--card);
+}
+.gtech__name { font-size: 13.4px; font-weight: 800; color: var(--ink); margin-bottom: 4px; }
+.gtech__body { margin: 0 0 6px; font-size: 13px; line-height: 1.6; color: var(--sub); }
+.gtech__ref {
+  margin: 0; padding-top: 6px; border-top: 1px dashed var(--line);
+  font-size: 11.8px; line-height: 1.5; color: var(--faint);
+}
+
+/* ---- 검색 파이프라인 다이어그램 ---- */
+.pipe { list-style: none; margin: 0 0 12px; padding: 0; position: relative; }
+.pipe::before {
+  content: ''; position: absolute; left: 21px; top: 14px; bottom: 14px;
+  width: 2px; background: var(--line);
+}
+.pipe__row { position: relative; display: flex; gap: 11px; align-items: flex-start; padding: 5px 0; }
+.pipe__n {
+  position: relative; z-index: 1; flex-shrink: 0;
+  width: 44px; height: 26px; display: grid; place-items: center;
+  border-radius: 7px; font-size: 12.5px; font-weight: 800;
+  background: var(--page); color: var(--sub); border: 1px solid var(--line);
+}
+.pipe__row--mid .pipe__n { background: var(--card); color: var(--ink); }
+.pipe__row--hot .pipe__n { background: var(--ink); color: #fff; border-color: var(--ink); }
+.pipe__txt { display: flex; flex-direction: column; padding-top: 2px; }
+.pipe__txt b { font-size: 13.4px; font-weight: 700; color: var(--ink); line-height: 1.35; }
+.pipe__txt em { font-style: normal; font-size: 12.2px; color: var(--faint); line-height: 1.45; }
+
+/* ---- 가드 목록 ---- */
+.gguard { list-style: none; margin: 0 0 10px; padding: 0; }
+.gguard li {
+  font-size: 13.2px; line-height: 1.55; color: var(--sub);
+  padding: 6px 0 6px 15px; position: relative; border-bottom: 1px solid var(--line);
+}
+.gguard li:last-child { border-bottom: 0; }
+.gguard li::before {
+  content: ''; position: absolute; left: 0; top: 12px;
+  width: 5px; height: 5px; border-radius: 50%; background: var(--ink);
+}
+.gguard li b { color: var(--ink); font-weight: 700; margin-right: 5px; }
 .colophon {
   margin: 10px 16px 16px;
   max-width: 448px;
