@@ -354,7 +354,9 @@ export default async function handler(req, res) {
   const apiKey = process.env.OPENAI_API_KEY
   if (!apiKey) return res.status(500).json({ error: 'OPENAI_API_KEY가 설정되지 않았습니다.' })
 
-  const { messages } = req.body || {}
+  // broaden=true — 고객이 "웹에서 더 찾아보기"를 눌렀을 때.
+  // 보유 카탈로그에서 답을 못 찾았음을 먼저 알리고, 동의를 받은 뒤에만 넓게 뒤진다.
+  const { messages, broaden = false } = req.body || {}
   if (!Array.isArray(messages) || messages.length === 0) {
     return res.status(400).json({ error: 'messages 배열이 필요합니다.' })
   }
@@ -415,7 +417,8 @@ export default async function handler(req, res) {
         variants.push([feat, catHit].join(' '))
       }
       variants.push(extractKeyword(lastUser) || extractKeyword(userText))
-      const includeDanawa = brands.length > 0 || pool.length < 5
+      // 넓혀 찾기에서는 느린 소스(다나와)까지 항상 포함한다.
+      const includeDanawa = broaden || brands.length > 0 || pool.length < 5
       // 특징어(사카이 등)가 실제로 포함된 결과를 낸 변형을 우선한다 —
       // 범용 결과("나이키 신발")로 조기 종료하면 정작 찾던 상품을 놓친다
       let generic = []
@@ -649,6 +652,15 @@ export default async function handler(req, res) {
       priceIntel: collection ? intelWithin(collection, p) : priceIntel(p),
     }))
 
+    /* 후보가 없을 때 '없다'로 끝내지 않는다.
+       보유 데이터에서 못 찾았다는 사실을 밝히고, 더 넓게 뒤질지 고객에게 묻는다.
+       이미 넓혀 찾은 뒤(broaden)라면 더 제안할 것이 없으므로 끄고,
+       그때는 정말로 못 찾았다고 말한다. */
+    const canBroaden = products.length === 0 && !broaden
+    if (products.length === 0 && broaden) {
+      reply = '웹까지 넓혀 찾아봤지만 조건에 맞는 상품을 찾지 못했어요. 조건을 조금 바꿔서 다시 말씀해 주시겠어요?'
+    }
+
     return res.status(200).json({
       reply,
       followUpQuestion,
@@ -657,6 +669,8 @@ export default async function handler(req, res) {
       catalogSize: CATALOG.length,
       liveCount: liveItems.length, // 프론트 상태행: "실시간 검색 N건 포함"
       budget,
+      canBroaden,
+      broadened: broaden,
     })
   } catch (err) {
     console.error('chat handler failed', err)

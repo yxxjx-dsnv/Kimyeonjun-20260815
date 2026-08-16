@@ -316,6 +316,23 @@ function AgentTurn({ turn, favs, toggleFav, onCompare }) {
       )}
       {turn.products?.length > 0 && mode === 'table' && <CompareTable products={turn.products} />}
 
+      {/* 보유 데이터에서 못 찾았을 때 — '없다'로 끝내지 않고 넓혀 찾을지 묻는다.
+          웹까지 뒤지는 것은 느리고 결과 품질도 달라지므로, 고객이 누른 경우에만 한다. */}
+      {turn.canBroaden && (
+        <div className="broaden">
+          <p className="broaden__t">
+            보유한 <b>948개 상품</b> 안에서는 찾지 못했어요.
+          </p>
+          <p className="broaden__s">웹 검색까지 넓혀서 찾아드릴까요? 조금 더 걸립니다.</p>
+          <button className="broaden__btn" onClick={turn.onBroaden}>
+            웹에서 더 찾아보기
+          </button>
+        </div>
+      )}
+      {turn.broadened && turn.products?.length > 0 && (
+        <p className="broaden__done">웹 검색까지 넓혀 찾은 결과입니다.</p>
+      )}
+
       {turn.followUpQuestion && <QuestionCard turn={turn} />}
     </div>
   )
@@ -377,7 +394,8 @@ function ChatView({ favs, toggleFav, onCompare, turns, setTurns, goDeals, index 
     }
   }, [turns, loading])
 
-  async function send(text) {
+  // broaden — 보유 카탈로그에서 못 찾았을 때, 고객이 동의한 경우에만 웹까지 넓혀 찾는다.
+  async function send(text, { broaden = false } = {}) {
     const question = text.trim()
     if (!question || loading) return
     const last = turns[turns.length - 1]
@@ -392,7 +410,7 @@ function ChatView({ favs, toggleFav, onCompare, turns, setTurns, goDeals, index 
       const res = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messages: next.map(({ role, content }) => ({ role, content })) }),
+        body: JSON.stringify({ messages: next.map(({ role, content }) => ({ role, content })), broaden }),
       })
       const data = await res.json().catch(() => ({}))
       if (!res.ok || typeof data.reply !== 'string') {
@@ -409,8 +427,12 @@ function ChatView({ favs, toggleFav, onCompare, turns, setTurns, goDeals, index 
           catalogSize: data.catalogSize,
           liveCount: data.liveCount || 0,
           budget: data.budget || null,
+          canBroaden: Boolean(data.canBroaden),
+          broadened: Boolean(data.broadened),
+          askedText: question, // 넓혀 찾기에서 같은 질의를 다시 보내기 위해
           elapsed: ((performance.now() - t0) / 1000).toFixed(1),
           onAnswer: send,
+          onBroaden: () => send(question, { broaden: true }),
         },
       ])
     } catch (err) {
@@ -514,12 +536,7 @@ function ChatView({ favs, toggleFav, onCompare, turns, setTurns, goDeals, index 
           )
         )}
 
-        {loading && (
-          <div className="statusrow statusrow--busy" aria-label="답변 작성 중">
-            <span className="spin" aria-hidden="true" />
-            5개 쇼핑몰에서 찾고 있어요…
-          </div>
-        )}
+        {loading && <SearchProgress />}
         {error && (
           <div className="errrow">
             {error.message}
@@ -938,6 +955,54 @@ const GUIDE_STEPS = [
     },
   },
 ]
+
+/**
+ * 검색 진행 표시.
+ *
+ * 예전에는 "5개 쇼핑몰에서 찾고 있어요…" 한 줄이 4~5초 동안 멈춰 있었다.
+ * 같은 대기 시간이라도 무엇을 하고 있는지 보이면 체감이 달라지고,
+ * 무엇보다 이 서비스가 '여러 곳을 실제로 뒤진다'는 것이 드러난다.
+ * 단계는 서버의 실제 처리 순서와 같다.
+ */
+const PROGRESS_STAGES = [
+  { t: '말씀하신 특징을 정리하는 중', s: 'AI' },
+  { t: '보유 카탈로그 948건 조회', s: '내부' },
+  { t: '무신사 검색 중', s: '무신사' },
+  { t: '29CM 검색 중', s: '29CM' },
+  { t: '컬리 검색 중', s: '컬리' },
+  { t: '다나와 최저가 조회 중', s: '다나와' },
+  { t: '가장 가까운 후보 고르는 중', s: 'AI' },
+  { t: '가격 비교 계산 중', s: '내부' },
+]
+
+function SearchProgress() {
+  const [i, setI] = useState(0)
+  useEffect(() => {
+    // 마지막 단계에서 멈춰 대기한다 — 끝나지 않았는데 끝난 것처럼 보이지 않도록.
+    const id = setInterval(() => setI((n) => Math.min(n + 1, PROGRESS_STAGES.length - 1)), 620)
+    return () => clearInterval(id)
+  }, [])
+  const cur = PROGRESS_STAGES[i]
+  return (
+    <div className="prog" role="status" aria-live="polite">
+      <div className="prog__head">
+        <span className="spin" aria-hidden="true" />
+        <b>{cur.t}</b>
+        <span className="prog__src">{cur.s}</span>
+      </div>
+      <div className="prog__bar" aria-hidden="true">
+        <i style={{ width: `${((i + 1) / PROGRESS_STAGES.length) * 100}%` }} />
+      </div>
+      <ul className="prog__list" aria-hidden="true">
+        {PROGRESS_STAGES.map((s, n) => (
+          <li key={n} className={n < i ? 'is-done' : n === i ? 'is-now' : ''}>
+            {s.s}
+          </li>
+        ))}
+      </ul>
+    </div>
+  )
+}
 
 /* 한 번의 검색이 지나는 경로 — 사이드 가이드용 축약 다이어그램.
    숫자는 실제 값이다(카탈로그 948건, 좁힌 뒤 ~100건, 최종 3건). */
