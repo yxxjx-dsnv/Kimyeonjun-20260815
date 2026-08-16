@@ -57,4 +57,35 @@ assert.ok(instantSearch(idx, 'ㅅㅋㄹ', 5).products.length > 0, '초성 검색
 assert.ok(instantSearch(idx, '디올', 5).products.length > 0, '단일 어절')
 ok('초성·조합중 자모·단일 어절 검색 유지')
 
+
+/* ---- 6. 갈래 판정: 가까운 대안은 통과, 다른 물건은 차단 ---- */
+const { wantedType, typeMismatch } = await import('../api/chat.js')
+
+// 같은 갈래 = 가까운 대안이므로 보여준다 ("니트" 요청 → "가디건" 후보)
+assert.equal(
+  typeMismatch('메종 키츠네 니트인데 큰 여우가 가운데 그려진거', [
+    { category: '가디건', name: '베이비 폭스 패치 레귤러 가디건' },
+  ]),
+  null,
+  '니트↔가디건은 같은 상의 갈래라 막으면 안 된다'
+)
+
+// 다른 갈래 = 다른 물건이므로 막는다 ("슬리퍼" 요청 → "반지갑" 후보)
+const mm = typeMismatch('남성 슬리퍼였어', [
+  { category: '반지갑', name: '에르메스 할로나 U각인 베안 반지갑 블랙 금장' },
+])
+assert.ok(mm, '슬리퍼↔반지갑은 다른 갈래라 반드시 걸러야 한다')
+assert.equal(mm.word, '슬리퍼')
+
+// 요청한 갈래가 후보에 있으면 통과
+assert.equal(
+  typeMismatch('에르메스 지갑 보여줘', [{ category: '반지갑', name: '에르메스 베안 반지갑' }]),
+  null
+)
+// 갈래를 말하지 않은 질의는 판정하지 않는다
+assert.equal(typeMismatch('뭔가 예쁜 거', [{ category: '반지갑', name: 'x' }]), null)
+
+assert.equal(wantedType('카드지갑 찾아줘').word, '카드지갑', '긴 단어가 먼저 잡혀야 한다')
+ok('갈래 판정 — 니트↔가디건 통과 / 슬리퍼↔반지갑 차단')
+
 console.log(`\n✅ 검색 회귀 테스트 ${n}항목 통과`)

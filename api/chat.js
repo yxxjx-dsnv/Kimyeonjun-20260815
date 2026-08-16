@@ -170,6 +170,46 @@ async function llmKeyword(apiKey, history) {
   }
 }
 
+/**
+ * 물건의 큰 갈래.
+ *
+ * "니트"를 찾는데 "가디건"이 나오는 것은 가까운 대안이지만,
+ * "슬리퍼"를 찾는데 "반지갑"이 나오는 것은 그냥 다른 물건이다.
+ * 앞은 보여주고 뒤는 막기 위해, 카테고리보다 한 단계 위의 갈래로 비교한다.
+ *
+ * 카탈로그에 없는 종류(슬리퍼·샌들 등)도 넣어둔다 —
+ * "우리가 안 파는 물건"을 인식해야 정직하게 답할 수 있다.
+ */
+const DOMAIN = {
+  신발: ['운동화', '스니커즈', '로퍼', '구두', '슬리퍼', '샌들', '부츠', '신발'],
+  지갑: ['카드지갑', '반지갑', '장지갑', '카드홀더', '지갑'],
+  가방: ['숄더백', '토트백', '크로스백', '클러치', '백팩', '가방'],
+  상의: ['맨투맨', '후드티', '티셔츠', '블라우스', '가디건', '니트', '셔츠'],
+  하의: ['청바지', '슬랙스', '스커트', '바지'],
+  아우터: ['자켓', '재킷', '코트', '패딩'],
+  뷰티: ['선크림', '립스틱', '세럼', '쿠션', '토너', '수분크림', '아이크림', '클렌징폼',
+        '향수', '샴푸', '트리트먼트', '바디로션', '핸드크림'],
+  생활: ['세탁세제', '주방세제', '프라이팬', '밀폐용기', '수세미', '텀블러', '휴지'],
+}
+
+/** 문장에서 물건의 갈래를 찾는다. 긴 단어부터 봐야 '카드지갑'이 '지갑'보다 먼저 잡힌다. */
+export function wantedType(text) {
+  const f = flat(text)
+  for (const [domain, words] of Object.entries(DOMAIN)) {
+    const word = [...words].sort((a, b) => b.length - a.length).find((w) => f.includes(w))
+    if (word) return { domain, word }
+  }
+  return null
+}
+
+/** 요청한 갈래의 상품이 후보에 하나도 없으면, 그건 '가까운 상품'이 아니라 다른 물건이다. */
+export function typeMismatch(userText, matched) {
+  const want = wantedType(userText)
+  if (!want || matched.length === 0) return null
+  const hit = matched.some((p) => wantedType(`${p.category} ${p.name}`)?.domain === want.domain)
+  return hit ? null : want
+}
+
 // 고객이 쓰는 상위어 ↔ 카탈로그 카테고리.
 // 카탈로그에는 '숄더백'만 있고 '가방'은 없어서, 상위어로 물으면 후보가 비었다.
 const META_CATEGORY = {
@@ -419,8 +459,31 @@ export default async function handler(req, res) {
         reply = '딱 맞는 건 못 찾았지만, 가장 가까운 상품으로 골라봤어요.'
       }
     }
-    // 후보를 보여주면서 "없다"고 말하는 모순을 서버가 최종 차단한다.
-    if (matched.length > 0 && /(없|어렵|못 찾|찾지 못)/.test(reply)) {
+
+    // 요청한 갈래의 상품이 하나도 없으면 후보를 비운다.
+    // "슬리퍼"를 물었는데 반지갑을 보여주는 것은 '가까운 상품'이 아니라 다른 물건이고,
+    // 그걸 보여주는 순간 이 서비스의 신뢰가 무너진다.
+    const mismatch = typeMismatch(userText, matched)
+    if (mismatch) {
+      // 후보는 틀렸지만 풀에는 요청한 갈래가 남아 있을 수 있다.
+      // (특히 실시간 검색 결과 — AI가 정적 카탈로그 쪽만 고른 경우)
+      const salvage = pool
+        .filter((p) => wantedType(`${p.category} ${p.name}`)?.domain === mismatch.domain)
+        .sort((a, b) => (b.live ? 1 : 0) - (a.live ? 1 : 0) || a.price - b.price)
+        .slice(0, 3)
+      if (salvage.length > 0) {
+        matched = salvage
+        reply = '말씀하신 조건에 가까운 상품으로 골라봤어요.'
+      } else {
+        matched = []
+        // 실시간 검색도 하므로 "안 판다"가 아니라 "지금 못 찾았다"가 정확하다.
+        reply = `${mismatch.word}는 지금 찾지 못했어요. 다른 브랜드나 종류로 찾아드릴까요?`
+      }
+    }
+
+    // 후보를 보여주면서 "없다"고 말하는 모순 차단.
+    // 단, 위에서 실제로 없다고 판정한 경우는 모순이 아니라 사실이므로 건드리지 않는다.
+    if (!mismatch && matched.length > 0 && /(없|어렵|못 찾|찾지 못)/.test(reply)) {
       reply = '말씀하신 조건에 가까운 상품으로 골라봤어요.'
     }
     // 규칙 6(최대 2문장)의 코드 보증 — 모델이 길게 쓰면 잘라낸다.
