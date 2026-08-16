@@ -24,7 +24,11 @@ check('2×2 선택지 그리드 4개', (html.match(/class="gcard"/g) || []).leng
 check('원하는 질문을 선택해보세요', html.includes('원하는 질문을 선택해보세요'))
 check('헤더 아이콘 내비 — 홈 화면엔 탐색·찜만 (실제 앱과 동일)', !html.includes('AI 찾기 홈') && html.includes('최저가 추적') && html.includes('찜한 목록'))
 check('하단 탭바 없음 (쇼포트에 없음)', !html.includes('tabbar'))
-check('화면 내 고지 문구 제거됨 (요청 반영)', !html.includes('실제 쇼포트 서비스가'))
+// 고지 문구는 폰 화면에서는 빼고(요청 반영), 데스크톱 사이드 가이드에만 남긴다.
+// 자사 앱 UX를 재현한 프로토타입이라 고지 자체는 어딘가 있어야 한다.
+const phoneOnly = html.slice(html.indexOf('class="phone"'), html.lastIndexOf('guide--right'))
+check('폰 화면 내 고지 문구 없음 (요청 반영)', !phoneOnly.includes('실제 쇼포트 서비스가'))
+check('고지 문구는 데스크톱 가이드에 유지', html.includes('실제 쇼포트 서비스가'))
 check('타이틀 레벨 프로토타입 표기 유지', readFileSync(`${root}/index.html`, 'utf8').includes('프로토타입'))
 await vite.close()
 
@@ -44,7 +48,9 @@ check('에이전트 상태행 (정리 완료)', src.includes('statusrow') && src
 check('유저 발화 pill', src.includes('upill'))
 check('찜 localStorage 영속화', src.includes('localStorage'))
 check('블랙 CTA 최저가 구매하기', src.includes('최저가 구매하기'))
-check('대화 입력창 (결과를 좁히거나…)', src.includes('결과를 좁히거나 다른 상품을 찾아드려요'))
+// 이전 문구는 한 줄에 안 들어가 두 번째 줄이 잘려 보였다.
+check('대화 입력창 placeholder가 한 줄에 들어가는 길이', src.includes('조건을 더 말씀해 주세요'))
+check('데스크톱 사이드 가이드 (사용법 + 설계 의도)', src.includes('GuideRail') && src.includes('왜 이렇게 했나'))
 check('리뷰 평점 표시', src.includes('card__rating'))
 check('상세 시트 ESC 닫기', src.includes("e.key === 'Escape'"))
 

@@ -537,7 +537,8 @@ function ChatView({ favs, toggleFav, onCompare, turns, setTurns, goDeals, index 
         <textarea
           rows={1}
           value={input}
-          placeholder="결과를 좁히거나 다른 상품을 찾아드려요"
+          /* 이전 문구는 한 줄에 안 들어가 두 번째 줄이 잘려 보였다. */
+          placeholder="조건을 더 말씀해 주세요"
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={onKey}
           aria-label="메세지 입력"
@@ -870,6 +871,140 @@ function Drawer({ sessions, onNew, onLoad, onClose }) {
 }
 
 /* ---------- 앱 ---------- */
+/* ---------- 데스크톱 사이드 가이드 ----------
+   폰 폭(448px) 셸이라 넓은 화면에서 양옆이 비는데, 이 공간을 설명에 쓴다.
+   왼쪽은 배경(왜 만들었나·데이터), 오른쪽은 지금 화면에서 해볼 것.
+   좁은 화면에서는 숨긴다. */
+
+const GUIDE_STEPS = [
+  {
+    key: 'home',
+    n: '01',
+    title: '이름 대신 생김새로 찾기',
+    how: [
+      '아래 입력창에 기억나는 특징을 문장으로 쓰세요.',
+      '예: "메종 키츠네 니트인데 큰 여우가 가운데 그려진거"',
+      '카메라 버튼으로 사진을 넣어 찾을 수도 있어요.',
+    ],
+    why: '고객은 상품을 이름이 아니라 색·무늬·형태로 기억합니다. 명품 상품명은 "크리스찬디올 SADDLE 플랩 카드 지갑 S5611CTZQ M928"처럼 외워서 검색할 수 있는 문자열이 아닙니다.',
+  },
+  {
+    key: 'thread',
+    n: '02',
+    title: '후보는 최대 3개만',
+    how: [
+      '조건이 부족하면 되묻습니다. 칩을 탭하면 답이 됩니다.',
+      '입력창에 조건을 더 붙여 결과를 좁힐 수 있어요.',
+      '카드의 [상세 보기]를 누르면 가격 비교가 열립니다.',
+    ],
+    why: '후보를 길게 나열하면 결국 고객이 목록을 다시 훑어야 해서 기존 검색과 같아집니다. 되묻기를 대화 전체에서 1회로 제한한 것도 같은 이유입니다 — 질문만 반복하는 챗봇이 되지 않도록 서버 코드로 강제했습니다.',
+  },
+  {
+    key: 'deals',
+    n: '03',
+    title: '가격은 근거가 있을 때만 말합니다',
+    how: [
+      '나침반 아이콘 → 시세보다 싼 상품만 모아 봅니다.',
+      '"시세보다 N% 저렴"은 같은 모델끼리 비교된 경우에만 붙습니다.',
+      '근거가 약하면 % 대신 "N건 중 1번째로 저렴"으로 바뀝니다.',
+    ],
+    why: '이 제품이 파는 것은 "싸게 샀다는 확신"이라, 그 근거가 틀리면 기능이 없느니만 못합니다. 편차가 큰 그룹은 % 주장을 포기하도록 막아서, 948건 중 % 표기가 붙는 건 73건(7.7%)뿐입니다.',
+  },
+  {
+    key: 'saved',
+    n: '04',
+    title: '하트로 담아두기',
+    how: ['하트를 누르면 찜 목록에 담깁니다.', '오른쪽 위 하트 아이콘에서 모아 볼 수 있어요.'],
+    why: '고액 상품은 한 번에 결정하지 않습니다. 다시 찾아오는 비용을 줄이는 것이 이탈을 막는 가장 싼 방법입니다.',
+  },
+]
+
+function GuideRail({ side, view, hasTurns }) {
+  const active =
+    view === 'deals' ? 'deals' : view === 'saved' ? 'saved' : hasTurns ? 'thread' : 'home'
+
+  // 화면을 옮기면 해당 단계가 가이드 안에서 보이도록 따라간다.
+  // (가이드 내용이 세로로 길어 03·04는 스크롤해야 보인다)
+  const railRef = useRef(null)
+  useEffect(() => {
+    if (side !== 'right') return
+    const el = railRef.current?.querySelector('.gstep.is-on')
+    el?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+  }, [active, side])
+
+  if (side === 'left') {
+    return (
+      <aside className="guide guide--left" aria-label="프로토타입 설명">
+        <div className="guide__inner">
+          <div className="guide__badge">레브잇 PMF 직무 과제</div>
+          <h2 className="guide__h">서술형 상품 탐색 에이전트</h2>
+          <p className="guide__lead">
+            정확한 상품명을 몰라도 <b>기억나는 특징을 말하면</b> 찾아주고,
+            그 가격이 같은 종류 안에서 어디쯤인지까지 보여줍니다.
+          </p>
+
+          <div className="guide__sec">
+            <h3>풀려는 문제</h3>
+            <ul>
+              <li>상품명을 특정하지 못해 <b>탐색 단계에서 이탈</b></li>
+              <li>가격 판단 기준이 없어 <b>결제 직전 유보</b></li>
+            </ul>
+          </div>
+
+          <div className="guide__sec">
+            <h3>쓰는 데이터</h3>
+            <p className="guide__p">
+              5개 쇼핑몰에서 직접 수집한 <b>948건</b>
+              <span className="guide__dim"> · 다나와 480 · 컬리 204 · 29CM 112 · 무신사 104 · KREAM 48</span>
+            </p>
+            <p className="guide__p guide__dim">
+              카탈로그에 없는 상품은 질의 시점에 실시간 검색으로 보완합니다.
+            </p>
+          </div>
+
+          <div className="guide__sec">
+            <h3>지킨 원칙</h3>
+            <p className="guide__p">
+              근거가 약하면 숫자를 만들지 않습니다. 가격은 전부 서버가 계산하고,
+              AI는 가격을 말할 수 없습니다.
+            </p>
+          </div>
+
+          <p className="guide__note">
+            실제 쇼포트 서비스가 아니라 과제용 프로토타입입니다.
+            UI는 쇼포트 앱의 UX 문법을 참고해 재현했습니다.
+          </p>
+        </div>
+      </aside>
+    )
+  }
+
+  return (
+    <aside className="guide guide--right" aria-label="사용 가이드" ref={railRef}>
+      <div className="guide__inner">
+        <div className="guide__badge guide__badge--live">지금 화면에서 해볼 것</div>
+        {GUIDE_STEPS.map((s) => (
+          <div key={s.key} className={`gstep ${active === s.key ? 'is-on' : ''}`}>
+            <div className="gstep__head">
+              <span className="gstep__n">{s.n}</span>
+              <b>{s.title}</b>
+            </div>
+            <ul className="gstep__how">
+              {s.how.map((h, i) => (
+                <li key={i}>{h}</li>
+              ))}
+            </ul>
+            <p className="gstep__why">
+              <span>왜 이렇게 했나</span>
+              {s.why}
+            </p>
+          </div>
+        ))}
+      </div>
+    </aside>
+  )
+}
+
 export default function App() {
   const [view, setView] = useState('chat')
   const [favs, setFavs] = useState(() => {
@@ -931,6 +1066,7 @@ export default function App() {
 
   return (
     <div className="stage">
+      <GuideRail side="left" view={view} hasTurns={turns.length > 0} />
       <div className="phone">
         <header className="appbar">
           <button className="iconbtn" onClick={() => setDrawer(true)} aria-label="대화 기록">{I.menu}</button>
@@ -981,6 +1117,7 @@ export default function App() {
           />
         )}
       </div>
+      <GuideRail side="right" view={view} hasTurns={turns.length > 0} />
     </div>
   )
 }
