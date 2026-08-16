@@ -9,7 +9,33 @@
  *  - 인스턴스 메모리 캐시 10분 — 같은 키워드 반복 질의에 비용/지연 없음
  */
 import { danawaSearch, cm29Search, musinsaSearch, kurlySearch, guessBrand, isJunk, flatten } from './_sources.js'
-import { assignGroups } from './_intel.js'
+import { assignGroups, CATALOG } from './_intel.js'
+
+/**
+ * 라이브 결과의 '종류'는 상품 제목에서 뽑는다.
+ * 예전에는 검색어의 마지막 어절을 그대로 썼는데, 그러면
+ * "10만원 이하 원피스" → 종류 "이하", "선물할 만한 거" → 종류 "상품"처럼
+ * 말이 안 되는 값이 카드에 그대로 노출됐다.
+ */
+const KNOWN_CATS = [
+  ...new Set([
+    ...CATALOG.map((p) => p.category).filter((c) => c && c !== '기타'),
+    // 카탈로그엔 없지만 실시간 검색에서는 나오는 종류
+    '슬리퍼', '샌들', '부츠', '구두', '모자', '벨트', '시계', '목걸이', '반지', '귀걸이',
+    '선글라스', '스카프', '장갑', '양말', '파자마', '잠옷', '가방', '지갑',
+  ]),
+].sort((a, b) => b.length - a.length) // 긴 것 우선 — '카드지갑'이 '지갑'보다 먼저
+
+const NON_CAT = new Set(['이하', '이상', '미만', '초과', '만원', '원', '추천', '상품', '거', '것', '개', '종'])
+
+export function categoryFrom(title, keyword) {
+  const t = (title || '').replace(/\s+/g, '')
+  const hit = KNOWN_CATS.find((c) => t.includes(c.replace(/\s+/g, '')))
+  if (hit) return hit
+  const last = (keyword || '').split(/\s+/).filter(Boolean).slice(-1)[0] || ''
+  if (last && !NON_CAT.has(last) && !/^\d/.test(last)) return last.slice(0, 10)
+  return '기타'
+}
 
 const cache = new Map() // keyword -> {at, items}
 const TTL = 10 * 60 * 1000
@@ -75,7 +101,7 @@ export async function liveSearch(keyword, { includeDanawa = false } = {}) {
         ...r,
         brand: r.brand || guessBrand(r.rawTitle),
         name: r.rawTitle.slice(0, 70),
-        category: keyword.split(' ').slice(-1)[0].slice(0, 10) || '기타', // 검색어 마지막 어절을 종류로
+        category: categoryFrom(r.rawTitle, keyword),
         catGroup: '라이브',
         model: '',
         condition: 'new',

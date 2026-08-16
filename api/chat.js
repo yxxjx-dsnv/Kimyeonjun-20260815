@@ -394,8 +394,9 @@ export default async function handler(req, res) {
           model: MODEL,
           temperature: 0.3,
           response_format: { type: 'json_object' },
-          // 타깃이 45~50세다. 긴 답변은 읽히지 않는다. 상한을 걸어 장황함을 구조적으로 막는다.
-          max_tokens: 220,
+          // 220으로 조였더니 JSON이 중간에 잘려 파싱이 깨지고 502가 나갔다("예쁜 가방" 등).
+          // 길이 제한은 아래 reply.slice가 담당하므로, 여기서는 JSON이 온전히 끝날 여유를 준다.
+          max_tokens: 500,
           messages: chatMessages,
         }),
       })
@@ -417,11 +418,19 @@ export default async function handler(req, res) {
     }
 
     const data = await completion.json()
+    const rawContent = data.choices?.[0]?.message?.content || '{}'
     let parsed
     try {
-      parsed = JSON.parse(data.choices?.[0]?.message?.content || '{}')
+      parsed = JSON.parse(rawContent)
     } catch {
-      return res.status(502).json({ error: 'AI 응답 형식이 올바르지 않습니다. 다시 시도해 주세요.' })
+      // JSON이 잘려도 사용자에게 오류 화면을 주지 않는다.
+      // 잘린 문자열에서 matchedIds라도 건져내고, 없으면 아래 키워드 백스톱이 후보를 채운다.
+      // (max_tokens를 220으로 조였을 때 이 경로로 502가 나갔었다)
+      console.error('JSON parse 실패 — 부분 복구 시도:', rawContent.slice(0, 200))
+      const ids = [...rawContent.matchAll(/"([a-zA-Z0-9_-]{4,})"/g)]
+        .map((m) => m[1])
+        .filter((s) => s !== 'reply' && s !== 'matchedIds' && s !== 'followUpQuestion' && s !== 'followUpOptions')
+      parsed = { reply: '', matchedIds: ids.slice(0, 3) }
     }
 
     const liveById = new Map(liveItems.map((p) => [p.id, p]))

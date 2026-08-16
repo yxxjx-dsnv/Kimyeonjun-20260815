@@ -88,4 +88,16 @@ assert.equal(typeMismatch('뭔가 예쁜 거', [{ category: '반지갑', name: '
 assert.equal(wantedType('카드지갑 찾아줘').word, '카드지갑', '긴 단어가 먼저 잡혀야 한다')
 ok('갈래 판정 — 니트↔가디건 통과 / 슬리퍼↔반지갑 차단')
 
+
+/* ---- 7. 라이브 결과의 '종류'가 말이 되는 값인가 ---- */
+const { categoryFrom } = await import('../api/_live.js')
+if (typeof categoryFrom === 'function') {
+  assert.equal(categoryFrom('[마른파이브] 모달 브이넥 롱 원피스 잠옷', '원피스 10만원 이하'), '원피스',
+    '제목에 있는 종류를 써야 한다')
+  assert.notEqual(categoryFrom('[동구밭] 가꿈비누 3종 선물 세트', '선물할 만한 거'), '거',
+    "'거' 같은 조각이 종류가 되면 안 된다")
+  assert.equal(categoryFrom('에르메스 이즈미르 남성 샌달 슬리퍼', '에르메스 슬리퍼'), '슬리퍼')
+  ok("라이브 결과 종류 추출 — '이하'·'거' 같은 쓰레기 값 차단")
+}
+
 console.log(`\n✅ 검색 회귀 테스트 ${n}항목 통과`)
