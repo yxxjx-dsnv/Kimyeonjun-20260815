@@ -38,7 +38,7 @@ const run = async () => {
   const p = await m.newPage()
 
   await p.goto(BASE, { waitUntil: 'networkidle' })
-  await shot(p, 'shot1_home')
+  await shot(p, 'shot1_home', 640)
 
   // 홈 첫 타일 = 서술형 탐색
   await p.getByRole('button', { name: /서술로 찾기/ }).click()
@@ -48,12 +48,12 @@ const run = async () => {
 
   await waitAnswer(p)
   await p.waitForTimeout(700)
-  await shot(p, 'shot3_result')
+  await shot(p, 'shot3_result', 720)
 
   // 가격 비교 시트
   await p.getByRole('button', { name: /가격 비교/ }).first().click()
   await p.waitForTimeout(900)
-  await shot(p, 'shot4_compare')
+  await shot(p, 'shot4_compare', 760)
   await p.keyboard.press('Escape').catch(() => {})
 
   // 카탈로그에 없는 요청 → 정직한 안내
@@ -62,7 +62,7 @@ const run = async () => {
   await ask(p2, '발렌시아가 벨트 있나요 로고 버클 달린 거요')
   await waitAnswer(p2)
   await p2.waitForTimeout(700)
-  await shot(p2, 'shot5_notfound')
+  await shot(p2, 'shot5_notfound', 720)
 
   /* ---------- 데스크톱: 사이드 가이드 ---------- */
   const d = await browser.newContext({ viewport: { width: 1512, height: 950 }, deviceScaleFactor: 2 })
