@@ -36,9 +36,16 @@ const COLOR_WORDS = [
 
 const flat = (s) => (s || '').replace(/\s+/g, '')
 
+// 질의는 공백을 지워 비교하는데 브랜드명은 원문 그대로 비교하고 있었다.
+// 그래서 "메종 키츠네"처럼 이름에 공백이 있는 브랜드 18개가 전부 인식되지 않았다.
+// (메종 키츠네 / 조 말론 런던 / 에스티 로더 / 바비 브라운 / 무신사 스탠다드 …)
+const BRAND_FLAT = new Map(BRANDS.map((b) => [b, flat(b)]))
+
 function detectBrands(text) {
   const t = flat(text)
-  return BRANDS.filter((b) => t.includes(b) || (BRAND_ALIASES[b] || []).some((a) => t.includes(a)))
+  return BRANDS.filter(
+    (b) => t.includes(BRAND_FLAT.get(b)) || (BRAND_ALIASES[b] || []).some((a) => t.includes(flat(a)))
+  )
 }
 const detectBrand = (text) => detectBrands(text)[0]
 
@@ -163,10 +170,17 @@ async function llmKeyword(apiKey, history) {
   }
 }
 
+// 고객이 쓰는 상위어 ↔ 카탈로그 카테고리.
+// 카탈로그에는 '숄더백'만 있고 '가방'은 없어서, 상위어로 물으면 후보가 비었다.
 const META_CATEGORY = {
   가방: ['숄더백', '토트백', '크로스백', '클러치', '백팩'],
   지갑: ['카드지갑', '반지갑', '장지갑'],
   신발: ['운동화', '로퍼'],
+  상의: ['니트', '가디건', '블라우스', '맨투맨', '후드티'],
+  하의: ['청바지', '슬랙스', '스커트'],
+  아우터: ['자켓', '코트', '가디건'],
+  화장품: ['선크림', '립스틱', '세럼', '쿠션', '토너', '수분크림', '아이크림', '클렌징폼'],
+  스킨케어: ['세럼', '토너', '수분크림', '아이크림', '클렌징폼', '선크림'],
 }
 
 /** 1단계 검색: 브랜드·카테고리·예산으로 정적 카탈로그를 좁힌다. */
