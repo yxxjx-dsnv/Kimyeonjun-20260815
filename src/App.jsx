@@ -364,8 +364,17 @@ function ChatView({ favs, toggleFav, onCompare, turns, setTurns, goDeals, index 
   const bottomRef = useRef(null)
   const heroRef = useRef(null)
 
+  const answerRef = useRef(null)
   useEffect(() => {
-    if (turns.length > 0) bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
+    if (turns.length === 0) return
+    // 최하단으로 보내면 답변과 상품 카드를 지나쳐 되묻기 카드에 착지한다.
+    // 답변이 도착하면 답변 시작 지점에, 그 외에는 하단에 맞춘다.
+    const last = turns[turns.length - 1]
+    if (last?.role === 'assistant' && answerRef.current) {
+      answerRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    } else {
+      bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
+    }
   }, [turns, loading])
 
   async function send(text) {
@@ -498,7 +507,10 @@ function ChatView({ favs, toggleFav, onCompare, turns, setTurns, goDeals, index 
               <span className="upill">{turn.content}</span>
             </div>
           ) : (
-            <AgentTurn key={i} turn={{ ...turn, onAnswer: send }} favs={favs} toggleFav={toggleFav} onCompare={onCompare} />
+            // 마지막 답변 시작 지점에 ref — 결과 도착 시 여기에 스크롤을 맞춘다
+            <div key={i} ref={i === turns.length - 1 ? answerRef : null}>
+              <AgentTurn turn={{ ...turn, onAnswer: send }} favs={favs} toggleFav={toggleFav} onCompare={onCompare} />
+            </div>
           )
         )}
 
@@ -783,9 +795,13 @@ function CompareSheet({ product, fav, onFav, onClose }) {
           )}
         </div>
 
+        {/* peers는 '같은 상품의 다른 판매처'가 아니라 '같은 그룹의 다른 매물'이다.
+            실제로 판매처가 2곳 이상일 때만 판매처 비교라고 부른다. */}
         <div className="csheet__sechead">
-          <b>판매처 별 판매가</b>
-          <span>5개 쇼핑몰 데이터 비교</span>
+          <b>{intel?.sellerCount >= 2 ? '판매처 별 판매가' : '같은 종류 다른 매물'}</b>
+          <span>
+            {intel?.sellerCount >= 2 ? `${intel.sellerCount}개 판매처 비교` : `${rows.length}건 가격순`}
+          </span>
         </div>
         <ul className="csheet__rows">
           {rows.map((r, i) => (
@@ -809,8 +825,9 @@ function CompareSheet({ product, fav, onFav, onClose }) {
           <button className={`btn btn--ghost ${fav ? 'is-fav' : ''}`} onClick={() => onFav(product.id)}>
             {fav ? '추적 중 🔔' : '가격 추적하기'}
           </button>
-          <a className="btn btn--solid" href={rows[0].url} target="_blank" rel="noreferrer">
-            최저가 구매하기
+          {/* 사용자가 연 상품을 사야 한다. rows[0]은 더 싼 '다른' 상품일 수 있다. */}
+          <a className="btn btn--solid" href={product.url} target="_blank" rel="noreferrer">
+            구매하러 가기
           </a>
         </div>
       </div>

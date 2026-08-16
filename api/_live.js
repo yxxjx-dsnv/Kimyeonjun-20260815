@@ -85,7 +85,9 @@ export async function liveSearch(keyword, { includeDanawa = false } = {}) {
         live: true, // 실시간 검색 결과 표시용
       }))
   )
-  cache.set(key, { at: Date.now(), items })
+  // 빈 결과를 캐시하면 쇼핑몰이 한 번 429/타임아웃을 낸 순간 그 키워드가
+  // 10분간 '결과 없음'으로 굳어 재시도해도 복구되지 않는다. 성공만 캐시한다.
+  if (items.length > 0) cache.set(key, { at: Date.now(), items })
   return items
 }
 

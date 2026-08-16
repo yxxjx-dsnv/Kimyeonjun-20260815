@@ -9,7 +9,9 @@
 :root {
   --ink: #17181c;
   --sub: #666d78;
-  --faint: #9aa1ab;
+  /* #9aa1ab는 흰 배경 대비 2.61:1로 WCAG AA(4.5:1) 미달이었다.
+     이 토큰이 플레이스홀더·빈 상태·시세 눈금에 쓰여 정작 '결과 없음'이 가장 안 보였다. */
+  --faint: #6b7280;
   --page: #f4f5f7;
   --card: #ffffff;
   --line: #ebecef;

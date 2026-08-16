@@ -14,7 +14,9 @@ import CATALOG from './_catalog.js'
 export { CATALOG }
 
 export const MIN_PEERS = 3
-export const MAX_SPREAD = 4
+// 편차 허용 상한. 4배까지 허용했더니 '물티슈 60매 vs 70매 4팩'처럼 서로 다른 상품이
+// 한 시세로 묶여 "72% 저렴"이 나왔다. 1.5배로 조여 동일·준동일 상품만 % 주장을 허용한다.
+export const MAX_SPREAD = 1.5
 
 export const byId = new Map(CATALOG.map((p) => [p.id, p]))
 
@@ -37,7 +39,11 @@ function computeIntel(product, group) {
     const prices = group.map((p) => p.price).sort((a, b) => a - b)
     const min = prices[0]
     const max = prices[prices.length - 1]
-    const median = prices[Math.floor(prices.length / 2)]
+    // 짝수 개일 때 prices[n/2]는 중앙값이 아니라 '가운데 위' 값이라 시세가 부풀고
+    // 할인율이 항상 과장된다. 두 중앙값의 평균으로 계산한다.
+    const mid = prices.length >> 1
+    const median =
+      prices.length % 2 ? prices[mid] : Math.round((prices[mid - 1] + prices[mid]) / 2)
     stats = {
       min,
       median,

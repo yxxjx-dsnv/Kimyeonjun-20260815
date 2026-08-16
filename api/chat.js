@@ -108,11 +108,13 @@ const SYSTEM_PROMPT = `너는 쇼핑 앱 '쇼포트'의 AI 쇼핑 에이전트�
 1. 반드시 목록에 있는 id만 고른다. 목록에 없는 상품을 지어내지 마라.
 2. **후보 우선**: 고객이 말한 브랜드나 종류가 목록에 있으면 matchedIds를 절대 비우지 마라. 완벽히 일치하지 않아도 가장 가까운 후보 1~3개를 골라라.
    고객이 브랜드를 말했다면 후보는 그 브랜드여야 한다. 단, "비슷한 거/대체품/~말고"처럼 다른 브랜드를 원하는 요청이면 예외다.
-3. **고객이 말한 조건(예산·색·용량·용도)을 무시하지 마라.** reply 첫 문장은 고객의 표현을 그대로 인용하며 시작하고, 각 후보가 조건의 어떤 부분과 맞는지, 어떤 부분은 상품 정보에 없어 확인이 필요한지 솔직히 말해라.
+3. 고객이 말한 조건(예산·색·용량·용도)에 맞는 상품만 골라라. 못 맞추는 조건이 있으면 그 상품을 후보에서 빼라.
 4. 질문은 대화 전체에서 **최대 한 번**, 그것도 후보를 함께 제시한 채로만. followUpOptions에 탭할 선택지 2~4개(각 8자 이내). 이미 물었다면 다시 묻지 말고 확정해라.
-5. 가격 언급 금지 — 가격 비교는 시스템이 정확한 데이터로 계산해 붙인다.
-6. 말투: 따뜻한 한국어 존댓말, 2~3문장, 쉬운 말.
-7. 요청한 브랜드·종류가 목록에 아예 없으면 솔직히 없다고 말해라. (목록에는 실시간 검색 결과도 포함되어 있다 — '라이브' 표시)
+5. 가격·시세·비교에 대해 아무것도 쓰지 마라 — 숫자도, 비교가 가능한지 불가능한지도. 비교는 카드가 보여준다.
+6. 말투: 따뜻한 한국어 존댓말, **최대 2문장**, 쉬운 말.
+7. **matchedIds가 비어 있지 않으면 "없다/어렵다/찾지 못했다"고 쓰지 마라.** 후보를 보여주면서 동시에 없다고 말하는 것은 모순이다.
+   목록에 그 브랜드·종류가 하나도 없을 때만 없다고 말하고, 그때는 matchedIds를 비워라.
+   (목록에는 실시간 검색 결과도 포함되어 있다 — '라이브' 표시)
 
 반드시 아래 JSON 형식으로만 답한다:
 {"reply": "고객에게 할 말", "matchedIds": ["id1","id2"], "followUpQuestion": "질문 또는 null", "followUpOptions": ["선택지"] }`
@@ -338,6 +340,8 @@ export default async function handler(req, res) {
           model: MODEL,
           temperature: 0.3,
           response_format: { type: 'json_object' },
+          // 타깃이 45~50세다. 긴 답변은 읽히지 않는다. 상한을 걸어 장황함을 구조적으로 막는다.
+          max_tokens: 220,
           messages: chatMessages,
         }),
       })
@@ -397,9 +401,16 @@ export default async function handler(req, res) {
       const fallback = keywordFallback(userText, pool, distinctiveFinal)
       if (fallback.length > 0) {
         matched = fallback
-        reply += ' 말씀하신 조건과 가까운 상품부터 보여드릴게요.'
+        // 덧붙이면 "없습니다 … 보여드릴게요"라는 모순이 된다. 통째로 교체한다.
+        reply = '딱 맞는 건 못 찾았지만, 가장 가까운 상품으로 골라봤어요.'
       }
     }
+    // 후보를 보여주면서 "없다"고 말하는 모순을 서버가 최종 차단한다.
+    if (matched.length > 0 && /(없|어렵|못 찾|찾지 못)/.test(reply)) {
+      reply = '말씀하신 조건에 가까운 상품으로 골라봤어요.'
+    }
+    // 규칙 6(최대 2문장)의 코드 보증 — 모델이 길게 쓰면 잘라낸다.
+    if (reply.length > 120) reply = reply.slice(0, 118).replace(/[,\s]+$/, '') + '…'
 
     const followUpQuestion =
       userTurns < 2 && typeof parsed.followUpQuestion === 'string' && parsed.followUpQuestion.trim()

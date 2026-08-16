@@ -11,7 +11,8 @@
     "test": "node api/_intel.js && node api/chat.js && node tests/render.test.mjs",
     "test:api": "node --env-file=.env.local tests/api.e2e.mjs",
     "test:browser": "node tests/browser.e2e.mjs",
-    "crawl:kream": "node crawler/kream.mjs"
+    "crawl:kream": "node crawler/kream.mjs",
+    "stats": "node api/_intel.js"
   },
   "dependencies": {
     "react": "^18.3.1",
