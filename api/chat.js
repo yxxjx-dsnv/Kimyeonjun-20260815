@@ -27,6 +27,16 @@ const BRAND_ALIASES = {
   생로랑: ['입생로랑', '입생'], 롱샴: ['롱샹'],
 }
 const CATEGORY_WORDS = [...new Set(CATALOG.map((p) => p.category))].filter((c) => c !== '기타')
+/**
+ * 특징어처럼 보이지만 거의 모든 상품 제목에 들어가는 범용어.
+ * 색상과 마찬가지로 "이 검색 결과가 찾던 물건이다"를 판정할 근거가 못 된다.
+ * '가죽' 하나 때문에 닥스 기본 지갑이 승인돼 보테가베네타 인트레치아토를 놓쳤다.
+ */
+const GENERIC_FEAT = new Set([
+  '가죽', '소가죽', '송아지', '천연', '정품', '새제품', '무늬', '패턴', '디자인',
+  '스타일', '느낌', '모양', '있나요', '있어요', '찾아요', '만든', '들어간', '달린',
+])
+
 const COLOR_WORDS = [
   '검정', '검은', '블랙', '흰', '화이트', '아이보리', '베이지', '갈색', '브라운', '카멜',
   '남색', '네이비', '파란', '블루', '하늘', '빨간', '레드', '와인', '버건디', '분홍', '핑크',
@@ -84,10 +94,15 @@ const wantsAlternative = (text) => /비슷한|대체|대신|말고|같은\s*느�
 const wantsExclusion = (text) => /말고|대신|대체/.test(text)
 
 /** AI가 빈손일 때의 결정론적 백스톱 — 브랜드/카테고리/색상 점수화 상위 3개. */
-function keywordFallback(text, pool, distinctive = []) {
+export function keywordFallback(text, pool, distinctive = []) {
   const brand = detectBrand(text)
   const t = flat(text)
-  const catHit = CATEGORY_WORDS.find((c) => t.includes(flat(c)))
+  // CATEGORY_WORDS는 카탈로그 카테고리(카드지갑·반지갑…)만 담고 상위어 '지갑'이 없다.
+  // 그래서 "반으로 접는 지갑" 같은 묘사에서 백스톱이 즉시 죽고 결과가 LLM 주사위에 100% 의존했다.
+  // buildStaticPool이 이미 쓰는 META_CATEGORY를 그대로 얹어 인식 범위를 맞춘다.
+  const catHit =
+    CATEGORY_WORDS.find((c) => t.includes(flat(c))) ||
+    Object.keys(META_CATEGORY).find((m) => t.includes(m))
   if (!brand && !catHit && pool.every((p) => !p.live)) return []
 
   const base = brand && !wantsAlternative(text) ? pool.filter((p) => p.brand === brand) : pool
@@ -181,30 +196,73 @@ async function llmKeyword(apiKey, history) {
  * "우리가 안 파는 물건"을 인식해야 정직하게 답할 수 있다.
  */
 const DOMAIN = {
-  신발: ['운동화', '스니커즈', '로퍼', '구두', '슬리퍼', '샌들', '부츠', '신발'],
-  지갑: ['카드지갑', '반지갑', '장지갑', '카드홀더', '지갑'],
-  가방: ['숄더백', '토트백', '크로스백', '클러치', '백팩', '가방'],
-  상의: ['맨투맨', '후드티', '티셔츠', '블라우스', '가디건', '니트', '셔츠'],
-  하의: ['청바지', '슬랙스', '스커트', '바지'],
-  아우터: ['자켓', '재킷', '코트', '패딩'],
+  신발: ['운동화', '스니커즈', '로퍼', '구두', '슬리퍼', '샌들', '부츠', '신발',
+        'sneakers', 'shoes', 'loafer', 'boots', 'sandals'],
+  지갑: ['카드지갑', '반지갑', '장지갑', '카드홀더', '지갑',
+        'cardholder', 'card holder', 'wallet'],
+  가방: ['숄더백', '토트백', '크로스백', '클러치', '백팩', '가방',
+        'crossbody', 'shoulder bag', 'tote', 'clutch', 'backpack', 'bag'],
+  상의: ['맨투맨', '후드티', '티셔츠', '블라우스', '가디건', '니트', '셔츠',
+        'hoodie', 'sweatshirt', 'cardigan', 'knit', 'shirt', 't-shirt'],
+  하의: ['청바지', '슬랙스', '스커트', '바지', 'jeans', 'slacks', 'skirt', 'pants'],
+  아우터: ['자켓', '재킷', '코트', '패딩', 'jacket', 'coat'],
+  // 카탈로그에 없는 갈래도 넣어야 "안 다루는 물건"을 인식해 정직하게 답할 수 있다.
+  액세서리: ['벨트', '모자', '캡', '시계', '목걸이', '반지', '귀걸이', '팔찌',
+           '선글라스', '스카프', '머플러', '장갑', '넥타이',
+           'belt', 'hat', 'cap', 'watch', 'necklace', 'ring', 'earring', 'sunglasses', 'scarf'],
   뷰티: ['선크림', '립스틱', '세럼', '쿠션', '토너', '수분크림', '아이크림', '클렌징폼',
-        '향수', '샴푸', '트리트먼트', '바디로션', '핸드크림'],
-  생활: ['세탁세제', '주방세제', '프라이팬', '밀폐용기', '수세미', '텀블러', '휴지'],
+        '향수', '샴푸', '트리트먼트', '바디로션', '핸드크림',
+        'lipstick', 'perfume', 'serum', 'toner', 'shampoo'],
+  생활: ['세탁세제', '주방세제', '프라이팬', '밀폐용기', '수세미', '텀블러', '휴지',
+        '보온병', '물통', '보틀', 'tumbler', 'bottle'],
 }
 
-/** 문장에서 물건의 갈래를 찾는다. 긴 단어부터 봐야 '카드지갑'이 '지갑'보다 먼저 잡힌다. */
+/**
+ * 문장에서 물건의 갈래를 찾는다.
+ * 긴 단어부터 봐야 '카드지갑'이 '지갑'보다 먼저 잡힌다.
+ * 영어 질의도 받으므로 소문자로 낮춰 비교한다.
+ */
 export function wantedType(text) {
-  const f = flat(text)
+  const f = flat(text).toLowerCase()
   for (const [domain, words] of Object.entries(DOMAIN)) {
-    const word = [...words].sort((a, b) => b.length - a.length).find((w) => f.includes(w))
+    const word = [...words]
+      .sort((a, b) => b.length - a.length)
+      .find((w) => f.includes(flat(w).toLowerCase()))
     if (word) return { domain, word }
   }
   return null
 }
 
+/**
+ * 지금 찾는 갈래.
+ *
+ * 대화 전체를 이어붙인 문자열로 판정하면 정정 발화가 망가진다.
+ * "에르메스 지갑 보여줘" → "아니 가방이었어" 에서 앞턴의 '지갑'이 계속 살아남아
+ * 방금 말한 '가방'을 이긴다. 마지막 발화에 갈래가 있으면 그걸 우선한다.
+ */
+export function currentType(lastUserText, allUserText) {
+  return wantedType(lastUserText) || wantedType(allUserText)
+}
+
+/**
+ * 갈래는 같은데 서로 배타적인 종류.
+ * "손목에 차는 시계"에 탁상시계·벽시계가 나오면 갈래(시계)는 맞지만 다른 물건이다.
+ * 관찰된 사례만 최소로 넣는다 — 추측으로 늘리면 멀쩡한 후보를 죽인다.
+ */
+const CONFLICTS = [
+  { want: /손목|차는|wrist/i, deny: /탁상|벽시계|괘종|스탠드|알람시계/ },
+]
+
+/** 고객이 말한 조건과 정면으로 어긋나는 후보를 걸러낸다. */
+function dropConflicting(userText, items) {
+  const rules = CONFLICTS.filter((c) => c.want.test(userText))
+  if (rules.length === 0) return items
+  return items.filter((p) => !rules.some((c) => c.deny.test(`${p.category} ${p.name}`)))
+}
+
 /** 요청한 갈래의 상품이 후보에 하나도 없으면, 그건 '가까운 상품'이 아니라 다른 물건이다. */
-export function typeMismatch(userText, matched) {
-  const want = wantedType(userText)
+export function typeMismatch(userText, matched, lastUserText = '') {
+  const want = lastUserText ? currentType(lastUserText, userText) : wantedType(userText)
   if (!want || matched.length === 0) return null
   const hit = matched.some((p) => wantedType(`${p.category} ${p.name}`)?.domain === want.domain)
   return hit ? null : want
@@ -338,28 +396,46 @@ export default async function handler(req, res) {
       // 특징어(사카이 등)가 실제로 포함된 결과를 낸 변형을 우선한다 —
       // 범용 결과("나이키 신발")로 조기 종료하면 정작 찾던 상품을 놓친다
       let generic = []
+      let liveGeneric = false
+      // 요청한 갈래 — 라이브 결과가 엉뚱한 물건이면 "특징 일치"로 쳐주지 않기 위해.
+      const askDomain = currentType(lastUser, userText)?.domain || null
       if (process.env.DEBUG_LIVE) console.warn('[live] ext=', JSON.stringify(ext), 'variants=', variants, 'distinctive=', distinctiveFinal)
       for (const kw of [...new Set(variants)].filter((k) => k && k.length >= 2)) {
         const items = await liveSearch(kw, { includeDanawa })
         if (process.env.DEBUG_LIVE) console.warn('[live]', kw, '→', items.length, '건')
         if (items.length === 0) continue
-        // 색상은 어느 상품에나 흔해 판정에서 제외 — 사카이·콜라보 같은 강특징만 본다
-        const strong = distinctiveFinal.filter((w) => !COLOR_WORDS.some((c) => w.startsWith(c) || c.startsWith(w)))
+        // 색상은 어느 상품에나 흔해 판정에서 제외 — 사카이·콜라보 같은 강특징만 본다.
+        // '가죽'·'무늬' 같은 범용어도 마찬가지다. 이 단어 하나가 걸려 배치 전체가 승인되면
+        // 캐스케이드가 조기 종료돼 정작 찾던 상품(예: 인트레치아토 카드지갑)을 놓친다.
+        const strong = distinctiveFinal.filter(
+          (w) => !COLOR_WORDS.some((c) => w.startsWith(c) || c.startsWith(w)) && !GENERIC_FEAT.has(w)
+        )
+        // 갈래를 말했으면 그 갈래의 상품이어야 '일치'다.
+        // ("표범 무늬 반지갑"에 표범 티셔츠가 통과해 정답을 밀어냈다)
+        const sameDomain = (p) =>
+          !askDomain || wantedType(`${p.category} ${p.rawTitle}`)?.domain === askDomain
         const featHit =
-          strong.length === 0 ||
-          strong.some((w) => items.some((p) => flat(p.rawTitle).includes(flat(w))))
+          strong.length === 0
+            ? items.some(sameDomain)
+            : strong.some((w) => items.some((p) => sameDomain(p) && flat(p.rawTitle).includes(flat(w))))
         if (featHit) {
           liveItems = items
           break
         }
         if (generic.length === 0) generic = items
       }
-      if (liveItems.length === 0) liveItems = generic
+      if (liveItems.length === 0) {
+        liveItems = generic
+        liveGeneric = true // 특징이 안 맞은 범용 결과 — 정적 카탈로그보다 뒤에 놓는다
+      }
       if (budget) {
         const inBudget = liveItems.filter((p) => p.price >= budget.min && p.price <= budget.max)
         if (inBudget.length >= 2) liveItems = inBudget
       }
-      if (liveItems.length > 0) pool = [...liveItems, ...pool].slice(0, 300)
+      // 특징이 맞은 라이브 결과만 앞에 둔다. 범용 결과를 앞에 두면
+      // 카탈로그의 정답이 목록 뒤로 밀려 모델이 앞쪽을 집는다.
+      if (liveItems.length > 0)
+        pool = (liveGeneric ? [...pool, ...liveItems] : [...liveItems, ...pool]).slice(0, 300)
     } catch (e) {
       console.warn('live search failed', String(e).slice(0, 120)) // 라이브 실패는 치명적이지 않다
     }
@@ -472,12 +548,19 @@ export default async function handler(req, res) {
     // 요청한 갈래의 상품이 하나도 없으면 후보를 비운다.
     // "슬리퍼"를 물었는데 반지갑을 보여주는 것은 '가까운 상품'이 아니라 다른 물건이고,
     // 그걸 보여주는 순간 이 서비스의 신뢰가 무너진다.
-    const mismatch = typeMismatch(userText, matched)
+    // 고객 조건과 정면으로 어긋나는 후보를 먼저 뺀다 (손목시계 요청에 벽시계 등).
+    matched = dropConflicting(userText, matched)
+
+    // 갈래는 '마지막 발화'를 우선한다 — 정정("아니 가방이었어")이 앞턴에 지지 않도록.
+    const mismatch = typeMismatch(userText, matched, lastUser)
     if (mismatch) {
-      // 후보는 틀렸지만 풀에는 요청한 갈래가 남아 있을 수 있다.
+      // 후보는 틀렸지만 풀에 요청한 갈래가 남아 있을 수 있다.
       // (특히 실시간 검색 결과 — AI가 정적 카탈로그 쪽만 고른 경우)
-      const salvage = pool
-        .filter((p) => wantedType(`${p.category} ${p.name}`)?.domain === mismatch.domain)
+      // 단, 고객이 브랜드를 말했으면 그 브랜드 안에서만 건진다.
+      // 이 가드가 없어서 "발렌티노 가방"에 엉뚱한 브랜드가 나왔다.
+      const inBrand = (p) => brands.length === 0 || wantsAlternative(userText) || brands.includes(p.brand)
+      const ofDomain = (p) => wantedType(`${p.category} ${p.name}`)?.domain === mismatch.domain
+      const salvage = dropConflicting(userText, pool.filter((p) => ofDomain(p) && inBrand(p)))
         .sort((a, b) => (b.live ? 1 : 0) - (a.live ? 1 : 0) || a.price - b.price)
         .slice(0, 3)
       if (salvage.length > 0) {
@@ -486,7 +569,8 @@ export default async function handler(req, res) {
       } else {
         matched = []
         // 실시간 검색도 하므로 "안 판다"가 아니라 "지금 못 찾았다"가 정확하다.
-        reply = `${mismatch.word}는 지금 찾지 못했어요. 다른 브랜드나 종류로 찾아드릴까요?`
+        const who = brands.length > 0 ? `${brands[0]} ${mismatch.word}` : mismatch.word
+        reply = `${who}는 지금 찾지 못했어요. 다른 브랜드나 종류로 찾아드릴까요?`
       }
     }
 
@@ -494,6 +578,11 @@ export default async function handler(req, res) {
     // 단, 위에서 실제로 없다고 판정한 경우는 모순이 아니라 사실이므로 건드리지 않는다.
     if (!mismatch && matched.length > 0 && /(없|어렵|못 찾|찾지 못)/.test(reply)) {
       reply = '말씀하신 조건에 가까운 상품으로 골라봤어요.'
+    }
+    // 반대 방향 모순 — 보여줄 상품이 없는데 "추천드립니다"라고 약속하는 경우.
+    // ("금색 시계는 목록에 없지만 … 다양한 시계를 추천드립니다" + 상품 0건)
+    if (matched.length === 0 && /(추천|보여드릴|골라봤|있습니다)/.test(reply)) {
+      reply = '조건에 맞는 상품을 찾지 못했어요. 다른 브랜드나 종류로 찾아드릴까요?'
     }
     // 규칙 6(최대 2문장)의 코드 보증 — 모델이 길게 쓰면 잘라낸다.
     if (reply.length > 120) reply = reply.slice(0, 118).replace(/[,\s]+$/, '') + '…'

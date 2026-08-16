@@ -100,4 +100,29 @@ if (typeof categoryFrom === 'function') {
   ok("라이브 결과 종류 추출 — '이하'·'거' 같은 쓰레기 값 차단")
 }
 
+
+/* ---- 8. 탐침(62건)에서 나온 결함 회귀 ---- */
+const { currentType, keywordFallback: kfb } = await import('../api/chat.js')
+
+// 정정 발화: 마지막 발화의 갈래가 앞턴을 이겨야 한다
+assert.equal(currentType('아니 가방이었어', '에르메스 지갑 보여줘 아니 가방이었어').domain, '가방',
+  '"아니 가방이었어"에서 앞턴의 지갑이 이기면 안 된다')
+assert.equal(currentType('그럼 구찌 가방으로 보여줘', '에르메스 지갑 보여줘 그럼 구찌 가방으로 보여줘').domain, '가방')
+
+// 액세서리 갈래 인식 (없는 물건을 정직하게 답하려면 먼저 인식해야 한다)
+for (const [q, d] of [['발렌시아가 벨트 있나요', '액세서리'], ['손목에 차는 얇은 금색 시계', '액세서리'],
+                      ['스테인리스 보온 물통', '생활']]) {
+  assert.equal(wantedType(q)?.domain, d, `"${q}" → ${d}`)
+}
+
+// 영어 질의도 갈래를 읽어야 한다
+assert.equal(wantedType('Do you have a black leather crossbody bag').domain, '가방', '영어 질의 갈래 인식')
+
+// 상위어 묘사에서 백스톱이 죽지 않아야 한다 (0건 방지)
+const bp = buildStaticPool('베이지 바탕에 갈색이랑 빨강 줄이 격자로 들어간 반으로 접는 지갑', null)
+assert.ok(kfb('베이지 바탕에 갈색이랑 빨강 줄이 격자로 들어간 반으로 접는 지갑', bp).length > 0,
+  '상위어("지갑")만 말한 묘사에서 백스톱이 후보를 내야 한다')
+
+ok('탐침 회귀 — 정정 발화·액세서리·영어·상위어 백스톱')
+
 console.log(`\n✅ 검색 회귀 테스트 ${n}항목 통과`)
